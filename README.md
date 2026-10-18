@@ -115,14 +115,15 @@ TREND_CANDLE_SECONDS=86400 MAX_TRADE_MINUTES=0 EXIT_ON_REVERSE=true MULTIPLIER=1
   --symbol frxEURUSD,frxGBPUSD,frxUSDJPY,frxAUDUSD --commission 0.0002
 ```
 
-Deriv's own daily candles include each day's high and low, so stop-outs
-during the day are caught. Crypto multipliers expire after 7 days
-(`MAX_TRADE_MINUTES=10080`); with `EXIT_ON_REVERSE=true` the backtest then
-reopens in the trend's direction, like the live bot:
+Deriv's own candles include each period's high and low, so stop-outs during
+the day are caught, but only for recent history. Hourly candles feeding the
+daily trend give the most realistic crypto test. Crypto multipliers expire
+after 7 days (`MAX_TRADE_MINUTES=10080`); with `EXIT_ON_REVERSE=true` the
+backtest then reopens in the trend's direction, like the live bot:
 
 ```
 TREND_CANDLE_SECONDS=86400 MAX_TRADE_MINUTES=10080 EXIT_ON_REVERSE=true MULTIPLIER=100 \
-  python -m bot.backtest --strategy trend --granularity 86400 --candles 5000 \
+  python -m bot.backtest --strategy trend --granularity 3600 --candles 20000 \
   --symbol cryETHUSD,cryBTCUSD --commission 0.0009
 ```
 
