@@ -248,11 +248,42 @@ def write_trades(path: Path, trades: list[Trade]) -> None:
             ])
 
 
+def combined_report(results: list[tuple[str, list[Trade]]]) -> str:
+    lines = ["All symbols:"]
+    all_trades = 0
+    all_net = 0.0
+    for symbol, trades in results:
+        net = sum(t.profit for t in trades)
+        lines.append(f"  {symbol}: {len(trades)} trades, net {net:+.2f}")
+        all_trades += len(trades)
+        all_net += net
+    lines.append(f"  Total: {all_trades} trades, net {all_net:+.2f}")
+    return "\n".join(lines)
+
+
+def _download(symbol: str, granularity: int, count: int) -> list[Candle] | None:
+    print(f"Downloading {count} candles of {symbol}...", file=sys.stderr)
+    try:
+        candles = asyncio.run(fetch_candles(symbol, granularity, count))
+    except (OSError, RuntimeError) as exc:
+        print(f"Could not download prices for {symbol}: {exc}", file=sys.stderr)
+        return None
+    if not candles:
+        print(f"Deriv returned no prices for {symbol}. Check the symbol name, "
+              "or try again when its market is open.", file=sys.stderr)
+        return None
+    saved = Path("data") / f"{symbol}_{granularity}.csv"
+    save_candles(saved, candles)
+    print(f"Saved prices to {saved} (reuse with --file)", file=sys.stderr)
+    return candles
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m bot.backtest", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--strategy", help="strategy name (default: STRATEGY from .env)")
-    parser.add_argument("--symbol", help="symbol (default: SYMBOL from .env)")
+    parser.add_argument("--symbol", help="symbol, or several separated by commas "
+                        "(default: SYMBOL from .env)")
     parser.add_argument("--candles", type=int, default=20000,
                         help="how many candles to download (default 20000, about 2 weeks)")
     parser.add_argument("--granularity", type=int, default=60, help="candle seconds (default 60)")
@@ -273,37 +304,44 @@ def main(argv: list[str] | None = None) -> int:
     env["DERIV_ACCOUNT_TYPE"] = "demo"
     if args.strategy:
         env["STRATEGY"] = args.strategy
-    if args.symbol:
-        env["SYMBOL"] = args.symbol
+    symbols = [x.strip() for x in (args.symbol or "").split(",") if x.strip()]
+    if symbols:
+        env["SYMBOL"] = symbols[0]
     try:
         cfg = Config.from_env(env)
-        strategy = make_strategy(cfg.strategy)
+        make_strategy(cfg.strategy)
     except (ConfigError, ValueError) as exc:
         print(f"Setup problem: {exc}", file=sys.stderr)
         return 2
+    symbols = symbols or [cfg.symbol]
+    if args.file and len(symbols) > 1:
+        print("--file works with one symbol at a time", file=sys.stderr)
+        return 2
 
-    if args.file:
-        candles = load_candles(args.file)
-    else:
-        print(f"Downloading {args.candles} candles of {cfg.symbol}...", file=sys.stderr)
-        try:
-            candles = asyncio.run(fetch_candles(cfg.symbol, args.granularity, args.candles))
-        except (OSError, RuntimeError) as exc:
-            print(f"Could not download prices: {exc}", file=sys.stderr)
-            return 1
-        if not candles:
-            print(f"Deriv returned no prices for {cfg.symbol}. Check the symbol name, "
-                  "or try again when its market is open.", file=sys.stderr)
-            return 1
-        saved = Path("data") / f"{cfg.symbol}_{args.granularity}.csv"
-        save_candles(saved, candles)
-        print(f"Saved prices to {saved} (reuse with --file)", file=sys.stderr)
+    totals: list[tuple[str, list[Trade]]] = []
+    for symbol in symbols:
+        sym_cfg = replace(cfg, symbol=symbol)
+        if args.file:
+            candles = load_candles(args.file)
+        else:
+            candles = _download(symbol, args.granularity, args.candles)
+            if candles is None:
+                if len(symbols) == 1:
+                    return 1
+                continue
+        trades = simulate(sym_cfg, make_strategy(cfg.strategy), candles,
+                          args.granularity, args.commission)
+        out = Path(cfg.log_dir) / f"backtest_{cfg.strategy}_{symbol}.csv"
+        write_trades(out, trades)
+        if len(symbols) > 1:
+            print()
+        print(report(trades, candles, sym_cfg, cfg.strategy))
+        print(f"Every simulated trade: {out}")
+        totals.append((symbol, trades))
 
-    trades = simulate(cfg, strategy, candles, args.granularity, args.commission)
-    out = Path(cfg.log_dir) / f"backtest_{cfg.strategy}_{cfg.symbol}.csv"
-    write_trades(out, trades)
-    print(report(trades, candles, cfg, cfg.strategy))
-    print(f"Every simulated trade: {out}")
+    if len(symbols) > 1:
+        print()
+        print(combined_report(totals))
     return 0
 
 

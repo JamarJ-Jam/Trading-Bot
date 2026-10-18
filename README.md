@@ -3,8 +3,8 @@
 A Python bot that trades Deriv **multipliers** over the Deriv API. It starts on
 the demo account, enforces hard risk limits, and logs every trade. The trading
 strategy is pluggable. Built in: `watch` (never trades), `demo_test` (demo-only
-plumbing test), `trend` (moving-average crossover) and `mean_revert`
-(Bollinger-band fade).
+plumbing test), `trend` (moving-average crossover), `mean_revert`
+(Bollinger-band fade) and `breakout` (London-open session breakout).
 
 **New here? Follow [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).**
 
@@ -74,8 +74,9 @@ tests/             offline tests, incl. a fake Deriv WebSocket server
 | `demo_test` | One tiny alternating trade every few minutes to prove the plumbing. Demo only. |
 | `trend` | Groups prices into candles (`TREND_CANDLE_SECONDS`, default 60) and trades UP when the fast EMA (`TREND_FAST`, 9) crosses above the slow EMA (`TREND_SLOW`, 21), DOWN when it crosses below. Exits come from `MAX_TRADE_MINUTES`, `TAKE_PROFIT` and `STOP_LOSS`. |
 | `mean_revert` | Bollinger bands of `MR_PERIOD` (20) candles at `MR_STD` (2.0) standard deviations, on `MR_CANDLE_SECONDS` (60) candles. Signals UP on the first close below the lower band and DOWN on the first close above the upper band, betting on a snap back. Same exits as `trend`. |
+| `breakout` | Marks the Asian range: the highest and lowest 15-minute close (`BO_CANDLE_SECONDS`, 900) between `BO_RANGE_START` (0) and `BO_RANGE_END` (7) UTC. Until `BO_TRADE_END` (12) UTC, the first close above the range signals UP and below it DOWN. One trade a day at most. Meant for forex; pair it with `MAX_TRADE_MINUTES=480`. |
 
-`trend` and `mean_revert` preload their recent candles from Deriv at startup,
+`trend`, `mean_revert` and `breakout` preload their recent candles from Deriv at startup,
 so they can trade straight away even on hourly candles. The candle size must
 be one Deriv offers (60, 120, 180, 300, 600, 900, 1800, 3600, 7200, 14400,
 28800 or 86400 seconds); otherwise the bot builds history from live prices.
@@ -86,7 +87,12 @@ be one Deriv offers (60, 120, 180, 300, 600, 900, 1800, 3600, 7200, 14400,
 python -m bot.backtest --strategy trend                 # ~2 weeks of 1-minute candles
 python -m bot.backtest --strategy trend --symbol frxEURUSD
 python -m bot.backtest --file data/1HZ100V_60.csv       # rerun on saved prices
+MAX_TRADE_MINUTES=480 python -m bot.backtest --strategy breakout --granularity 900 \
+  --symbol frxEURUSD,frxGBPUSD,frxUSDJPY,frxAUDUSD --commission 0.0002
 ```
+
+Several symbols separated by commas each get their own report, then a
+combined total.
 
 Downloads candles from Deriv's public feed (no token needed), replays them
 through the strategy and the same `RiskManager` the live bot uses, and prints

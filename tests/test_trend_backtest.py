@@ -154,3 +154,67 @@ def test_mean_revert_registered_and_backtests(cfg):
     closes = [100 + 2 * math.sin(i / 7) + (3 if i % 97 == 0 else 0) for i in range(2000)]
     trades = simulate(cfg, MeanRevert(period=20, width=2.0), candles_from(closes), 60)
     assert trades and all(t.profit >= -cfg.stake for t in trades)
+
+
+def day_closes(asia, london, seconds=900):
+    """One UTC day of 15-minute closes: flat Asian range, then the given London path."""
+    per_hour = 3600 // seconds
+    closes = []
+    for i in range(24 * per_hour):
+        hour = i // per_hour
+        if hour < 7:
+            closes.append(asia[i % len(asia)])
+        else:
+            closes.append(london[min(i - 7 * per_hour, len(london) - 1)])
+    return closes
+
+
+def test_breakout_trades_first_break_once_per_day():
+    from bot.strategies.breakout import SessionBreakout
+
+    asia = [100.0, 100.5, 99.5]
+    london = [100.0, 100.2, 101.0, 102.0, 98.0, 103.0]
+    closes = day_closes(asia, london) * 2
+    signals = feed_candles(SessionBreakout(), closes, seconds=900)
+    # One UP per day, on the first close above 100.5 (third London candle).
+    assert [d for _, d in signals] == ["UP", "UP"]
+    assert signals[0][0] == 7 * 4 + 2
+    assert signals[1][0] == 96 + 7 * 4 + 2
+
+
+def test_breakout_ignores_breaks_outside_trade_window():
+    from bot.strategies.breakout import SessionBreakout
+
+    closes = day_closes([100.0, 100.5, 99.5], [100.0])
+    closes[13 * 4] = 105.0  # 13:00 UTC, after BO_TRADE_END
+    assert feed_candles(SessionBreakout(), closes, seconds=900) == []
+
+
+def test_breakout_settings_validated(monkeypatch):
+    monkeypatch.setenv("BO_RANGE_END", "13")
+    with pytest.raises(ValueError):
+        make_strategy("breakout")
+    monkeypatch.delenv("BO_RANGE_END")
+    monkeypatch.setenv("BO_CANDLE_SECONDS", "700")
+    with pytest.raises(ValueError):
+        make_strategy("breakout")
+
+
+def test_backtest_cli_several_symbols(tmp_path, monkeypatch, capsys):
+    closes = day_closes([100.0, 100.5, 99.5], [100.0, 101.0, 102.0, 103.0]) * 3
+    candles = candles_from(closes, seconds=900)
+
+    async def fake_fetch(symbol, granularity, count, connect=None, now=None):
+        return candles
+
+    monkeypatch.setattr(backtest, "fetch_candles", fake_fetch)
+    monkeypatch.chdir(tmp_path)
+    for k in ("DERIV_API_TOKEN", "DERIV_APP_ID", "STRATEGY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MAX_TRADE_MINUTES", "240")
+    assert backtest.main(["--strategy", "breakout", "--symbol", "frxEURUSD,frxGBPUSD",
+                          "--granularity", "900"]) == 0
+    out = capsys.readouterr().out
+    assert "Strategy breakout on frxEURUSD" in out and "Strategy breakout on frxGBPUSD" in out
+    assert "All symbols:" in out and "frxGBPUSD: 3 trades" in out
+    assert (tmp_path / "logs" / "backtest_breakout_frxGBPUSD.csv").exists()
