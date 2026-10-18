@@ -60,6 +60,11 @@ class TrendFollow(Strategy):
         self._bucket, self._close = bucket, price
         return signal
 
+    def current_direction(self) -> str | None:
+        if self._prev_diff is None or self.candles_seen <= self.slow_len:
+            return None
+        return "UP" if self._prev_diff > 0 else "DOWN" if self._prev_diff < 0 else None
+
     def _on_candle_close(self, close: float) -> Signal | None:
         self.candles_seen += 1
         diff = self.fast.update(close) - self.slow.update(close)

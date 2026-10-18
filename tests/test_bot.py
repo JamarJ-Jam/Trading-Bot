@@ -230,3 +230,62 @@ async def test_reverse_gives_up_if_old_trade_stays_open(cfg):
     await bot._reverse([trade], Signal("DOWN", "crossed"), wait_seconds=0.1)
     assert "buy" not in client.kinds()
     assert bot._placing is False
+
+
+class Leaning(Strategy):
+    name = "leaning"
+
+    def __init__(self, side):
+        self.side = side
+
+    def on_tick(self, price, epoch):
+        return None
+
+    def current_direction(self):
+        return self.side
+
+
+class PortfolioClient(FakeClient):
+    async def request(self, payload):
+        if "portfolio" in payload:
+            self.sent.append(payload)
+            return {"msg_type": "portfolio", "portfolio": {"contracts": [
+                {"contract_id": 111, "buy_price": 1.0, "contract_type": "MULTUP"}]}}
+        return await super().request(payload)
+
+
+async def test_adopted_trade_keeps_direction_and_is_reversed_if_trend_turned(cfg):
+    from dataclasses import replace as dc_replace
+
+    cfg = dc_replace(cfg, exit_on_reverse=True)
+    client = PortfolioClient()
+    bot = make_bot(cfg, client, Leaning("DOWN"))
+    await bot._adopt_open_contracts()
+    assert bot.open_trades["111"].direction == "UP"
+
+    bot._reconcile_direction()
+    while not any("sell" in p for p in client.sent):
+        await asyncio.sleep(0.01)
+    bot._on_contract({"contract_id": 111, "is_sold": 1, "profit": -0.1})
+    await asyncio.gather(*bot._tasks)
+    assert bot.open_trades["555"].direction == "DOWN"
+
+
+async def test_no_reconcile_when_trend_still_agrees(cfg):
+    from dataclasses import replace as dc_replace
+
+    client = PortfolioClient()
+    bot = make_bot(dc_replace(cfg, exit_on_reverse=True), client, Leaning("UP"))
+    await bot._adopt_open_contracts()
+    bot._reconcile_direction()
+    assert not bot._tasks and "sell" not in client.kinds()
+
+
+def test_trend_reports_current_direction():
+    from bot.strategies.trend import TrendFollow
+
+    t = TrendFollow(fast=2, slow=4, candle_seconds=60)
+    assert t.current_direction() is None
+    for i in range(10):
+        t.on_tick(100 + i, i * 60)
+    assert t.current_direction() == "UP"
