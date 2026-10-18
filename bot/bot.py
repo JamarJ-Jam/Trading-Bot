@@ -194,7 +194,12 @@ class TradingBot:
         signal = self.strategy.on_tick(price, epoch)
         if signal is not None and not self._placing:
             self._placing = True
-            self._spawn(self.try_trade(signal))
+            opposite = [t for t in self.open_trades.values()
+                        if t.direction and t.direction != signal.direction]
+            if self.cfg.exit_on_reverse and opposite:
+                self._spawn(self._reverse(opposite, signal))
+            else:
+                self._spawn(self.try_trade(signal))
 
     def _on_contract(self, poc: dict) -> None:
         cid = str(poc.get("contract_id", ""))
@@ -230,6 +235,25 @@ class TradingBot:
                               stake=self.cfg.stake, reason=str(exc))
         finally:
             self._placing = False
+
+    async def _reverse(self, trades: list[OpenTrade], signal: Signal,
+                       wait_seconds: float = 30.0) -> None:
+        """EXIT_ON_REVERSE: close trades pointing the other way, wait for
+        Deriv to confirm, then take the new signal."""
+        try:
+            for trade in trades:
+                await self.sell(trade, f"signal reversed ({signal.reason})")
+            deadline = time.monotonic() + wait_seconds
+            while any(t.contract_id in self.open_trades for t in trades):
+                if time.monotonic() > deadline:
+                    log.warning("Old trade not closed yet; skipping signal %s", signal.direction)
+                    self._placing = False
+                    return
+                await asyncio.sleep(0.2)
+        except BaseException:
+            self._placing = False
+            raise
+        await self.try_trade(signal)
 
     async def _trade(self, signal: Signal) -> None:
         cfg = self.cfg

@@ -242,3 +242,15 @@ def test_backtest_cli_fred_source(tmp_path, monkeypatch, capsys):
     assert "All symbols:" in out and "frxUSDJPY:" in out
     assert (tmp_path / "data" / "frxEURUSD_86400_fred.csv").exists()
     assert backtest.main(["--source", "fred"]) == 2
+
+
+def test_simulate_exit_on_reverse_holds_until_opposite_signal(cfg):
+    cfg = replace(cfg, multiplier=10, max_trade_minutes=0, max_daily_loss=5.0,
+                  exit_on_reverse=True)
+    closes = ([100.0] * 30 + [100 * 1.002 ** i for i in range(1, 80)]
+              + [100 * 1.002 ** 79 * 0.998 ** i for i in range(1, 80)])
+    trades = simulate(cfg, TrendFollow(fast=3, slow=8), candles_from(closes), 60)
+    assert trades[0].direction == "UP" and trades[0].reason == "reversed"
+    assert trades[0].profit > 0
+    # the reversal opened a DOWN trade straight away, on the same candle
+    assert len(trades) == 1  # still open at the end, so not reported

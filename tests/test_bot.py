@@ -190,3 +190,43 @@ async def test_no_warm_up_for_tick_strategies(cfg):
     client = FakeClient()
     await make_bot(cfg, client)._warm_up()
     assert client.sent == []
+
+
+async def test_reverse_closes_old_trade_then_opens_new(cfg):
+    from dataclasses import replace as dc_replace
+    from bot.bot import OpenTrade
+
+    cfg = dc_replace(cfg, exit_on_reverse=True)
+    client = FakeClient()
+    bot = make_bot(cfg, client)
+    bot.open_trades["111"] = OpenTrade("111", 1.0, "UP")
+    bot.risk.record_open("111", 1.0)
+
+    async def deriv_confirms_sale():
+        while not any("sell" in p for p in client.sent):
+            await asyncio.sleep(0.01)
+        bot._on_contract({"contract_id": 111, "is_sold": 1, "profit": -0.2})
+
+    bot._placing = True
+    await asyncio.gather(
+        bot._reverse([bot.open_trades["111"]], Signal("DOWN", "crossed")),
+        deriv_confirms_sale(),
+    )
+    kinds = client.kinds()
+    assert kinds.index("sell") < kinds.index("buy")
+    assert "111" not in bot.open_trades and "555" in bot.open_trades
+    assert bot.open_trades["555"].direction == "DOWN"
+    assert bot._placing is False
+
+
+async def test_reverse_gives_up_if_old_trade_stays_open(cfg):
+    from bot.bot import OpenTrade
+
+    client = FakeClient()
+    bot = make_bot(cfg, client)
+    trade = OpenTrade("111", 1.0, "UP")
+    bot.open_trades["111"] = trade
+    bot._placing = True
+    await bot._reverse([trade], Signal("DOWN", "crossed"), wait_seconds=0.1)
+    assert "buy" not in client.kinds()
+    assert bot._placing is False
