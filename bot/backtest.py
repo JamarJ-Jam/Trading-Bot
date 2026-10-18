@@ -27,6 +27,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .chart import write_chart
 from .config import Config, ConfigError
 from .risk import RiskManager
 from .strategies import Strategy, make_strategy
@@ -139,6 +140,9 @@ FRED_SERIES = {
     "frxUSDJPY": ("DEXJPUS", False),
     "frxUSDCAD": ("DEXCAUS", False),
     "frxUSDCHF": ("DEXSZUS", False),
+    # Coinbase daily closes, from about 2015
+    "cryBTCUSD": ("CBBTCUSD", False),
+    "cryETHUSD": ("CBETHUSD", False),
 }
 
 
@@ -199,9 +203,29 @@ def _check_exit(cfg: Config, trade: Trade, c: Candle) -> tuple[float, str] | Non
     return None
 
 
+def _check_binary(cfg: Config, trade: Trade, c: Candle,
+                  payout: float) -> tuple[float, str] | None:
+    """Rise/Fall: pays stake x payout if the price ends on the right side
+    of the entry after MAX_TRADE_MINUTES, otherwise the stake is lost
+    (a tie loses too)."""
+    if c.epoch - trade.entry_epoch < cfg.max_trade_minutes * 60:
+        return None
+    right = c.close > trade.entry if trade.direction == "UP" else c.close < trade.entry
+    return (round(cfg.stake * payout, 2), "won") if right else (-cfg.stake, "lost")
+
+
 def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
-             granularity: int, commission: float = 0.0) -> list[Trade]:
-    """Replay candles through the strategy and the real RiskManager."""
+             granularity: int, commission: float = 0.0,
+             payout: float | None = None) -> list[Trade]:
+    """Replay candles through the strategy and the real RiskManager.
+
+    With payout set, trades are Rise/Fall contracts instead of multipliers:
+    fixed win or loss, settled after MAX_TRADE_MINUTES, no commission.
+    """
+    if payout is not None:
+        if cfg.max_trade_minutes <= 0:
+            raise ValueError("Rise/Fall needs MAX_TRADE_MINUTES above 0 (the contract length)")
+        commission = 0.0
     clock = SimClock()
     with tempfile.TemporaryDirectory() as tmp:
         sim_cfg = replace(cfg, state_dir=Path(tmp), kill_switch_file=Path(tmp) / "never")
@@ -212,7 +236,10 @@ def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
         for c in candles:
             clock.now = datetime.fromtimestamp(c.epoch, timezone.utc)
             if open_trade is not None:
-                result = _check_exit(cfg, open_trade, c)
+                if payout is not None:
+                    result = _check_binary(cfg, open_trade, c, payout)
+                else:
+                    result = _check_exit(cfg, open_trade, c)
                 if result is not None:
                     profit, reason = result
                     profit = round(profit - commission * cfg.stake * cfg.multiplier, 2)
@@ -228,6 +255,7 @@ def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
             signal = strategy.on_tick(c.close, c.epoch)
             signal = strategy.on_tick(c.close, c.epoch + granularity) or signal
             if (signal is not None and open_trade is not None and cfg.exit_on_reverse
+                    and payout is None
                     and signal.direction != open_trade.direction):
                 profit = round(_pnl(cfg, open_trade, c.close)
                                - commission * cfg.stake * cfg.multiplier, 2)
@@ -248,13 +276,17 @@ def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
 
 # ---- report -------------------------------------------------------------------
 
-def report(trades: list[Trade], candles: list[Candle], cfg: Config, strategy: str) -> str:
+def report(trades: list[Trade], candles: list[Candle], cfg: Config, strategy: str,
+           payout: float | None = None) -> str:
     if not candles:
         return "No price data."
     start = datetime.fromtimestamp(candles[0].epoch, timezone.utc)
     end = datetime.fromtimestamp(candles[-1].epoch, timezone.utc)
     lines = [
-        f"Strategy {strategy} on {cfg.symbol}, x{cfg.multiplier}, stake {cfg.stake:.2f}",
+        f"Strategy {strategy} on {cfg.symbol}, "
+        + (f"Rise/Fall paying {payout:.0%} over {cfg.max_trade_minutes} min"
+           if payout is not None else f"x{cfg.multiplier}")
+        + f", stake {cfg.stake:.2f}",
         f"Prices {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC ({len(candles)} candles)",
     ]
     if not trades:
@@ -280,7 +312,8 @@ def report(trades: list[Trade], candles: list[Candle], cfg: Config, strategy: st
         f"Net result {net:+.2f}, average per trade {net / len(trades):+.3f}",
         f"Worst drop from a high point {drawdown:.2f}",
         "Exits: " + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items())),
-        "Before Deriv's commission and spread: real results will be worse.",
+        ("Rise/Fall payout already includes Deriv's margin." if payout is not None
+         else "Before Deriv's commission and spread: real results will be worse."),
     ]
     return "\n".join(lines)
 
@@ -349,7 +382,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", choices=["deriv", "fred"], default="deriv",
                         help="where to get prices: deriv (default) or fred, which has "
                         "decades of daily forex rates (use with --granularity 86400)")
+    parser.add_argument("--payout", type=float,
+                        help="simulate Rise/Fall contracts paying this fraction of the stake "
+                        "on a win (e.g. 0.95) instead of multipliers; MAX_TRADE_MINUTES "
+                        "sets the contract length")
     args = parser.parse_args(argv)
+    if args.payout is not None and not 0 < args.payout <= 2:
+        print("--payout should be a fraction like 0.95", file=sys.stderr)
+        return 2
     if args.source == "fred" and args.granularity != 86400:
         print("--source fred only has daily prices: add --granularity 86400", file=sys.stderr)
         return 2
@@ -391,19 +431,30 @@ def main(argv: list[str] | None = None) -> int:
                 if len(symbols) == 1:
                     return 1
                 continue
-        trades = simulate(sym_cfg, make_strategy(cfg.strategy), candles,
-                          args.granularity, args.commission)
+        try:
+            trades = simulate(sym_cfg, make_strategy(cfg.strategy), candles,
+                              args.granularity, args.commission, args.payout)
+        except ValueError as exc:
+            print(f"Setup problem: {exc}", file=sys.stderr)
+            return 2
         out = Path(cfg.log_dir) / f"backtest_{cfg.strategy}_{symbol}.csv"
         write_trades(out, trades)
         if len(symbols) > 1:
             print()
-        print(report(trades, candles, sym_cfg, cfg.strategy))
+        print(report(trades, candles, sym_cfg, cfg.strategy, args.payout))
         print(f"Every simulated trade: {out}")
         totals.append((symbol, trades))
 
     if len(symbols) > 1:
         print()
         print(combined_report(totals))
+    if totals:
+        kind = "risefall" if args.payout is not None else "multiplier"
+        chart = Path(cfg.log_dir) / f"backtest_{cfg.strategy}_{kind}.html"
+        label = (f"Rise/Fall {args.payout:.0%}" if args.payout is not None
+                 else f"x{cfg.multiplier} multipliers")
+        write_chart(chart, totals, f"{cfg.strategy} backtest, {label}")
+        print(f"Chart: {chart} (open it in a browser)")
     return 0
 
 
