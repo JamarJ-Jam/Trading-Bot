@@ -227,6 +227,16 @@ def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
             # time, so candle-based strategies see the candle finish now.
             signal = strategy.on_tick(c.close, c.epoch)
             signal = strategy.on_tick(c.close, c.epoch + granularity) or signal
+            if (signal is not None and open_trade is not None and cfg.exit_on_reverse
+                    and signal.direction != open_trade.direction):
+                profit = round(_pnl(cfg, open_trade, c.close)
+                               - commission * cfg.stake * cfg.multiplier, 2)
+                open_trade.exit_epoch, open_trade.exit = c.epoch + granularity, c.close
+                open_trade.profit, open_trade.reason = profit, "reversed"
+                risk.record_close(str(len(trades)), profit)
+                strategy.on_trade_closed(profit)
+                trades.append(open_trade)
+                open_trade = None
             if signal is None or open_trade is not None:
                 continue
             allowed, _ = risk.check(cfg.stake)

@@ -72,6 +72,7 @@ class Config:
     max_consecutive_losses: int = 3
     pause_minutes: int = 30
     max_trade_minutes: int = 10
+    exit_on_reverse: bool = False
     take_profit: float | None = None
     stop_loss: float | None = None
     log_dir: Path = Path("logs")
@@ -120,6 +121,7 @@ class Config:
             max_consecutive_losses=_int(env, "MAX_CONSECUTIVE_LOSSES", "3"),
             pause_minutes=_int(env, "PAUSE_MINUTES", "30"),
             max_trade_minutes=_int(env, "MAX_TRADE_MINUTES", "10"),
+            exit_on_reverse=_bool(env, "EXIT_ON_REVERSE"),
             take_profit=_optional_money(env, "TAKE_PROFIT"),
             stop_loss=_optional_money(env, "STOP_LOSS"),
             log_dir=Path(_get(env, "LOG_DIR", "logs")),
