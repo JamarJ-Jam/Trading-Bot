@@ -94,6 +94,17 @@ MAX_TRADE_MINUTES=480 python -m bot.backtest --strategy breakout --granularity 9
 Several symbols separated by commas each get their own report, then a
 combined total.
 
+Deriv only serves about a year of daily candles. For long daily tests,
+`--source fred` downloads decades of free daily rates from the US Federal
+Reserve (FRED) for the major pairs instead (one rate per day, so stop-outs
+during the day aren't seen):
+
+```
+TREND_CANDLE_SECONDS=86400 MAX_TRADE_MINUTES=40320 MULTIPLIER=10 python -m bot.backtest \
+  --strategy trend --source fred --granularity 86400 \
+  --symbol frxEURUSD,frxGBPUSD,frxUSDJPY,frxAUDUSD --commission 0.0002
+```
+
 Downloads candles from Deriv's public feed (no token needed), replays them
 through the strategy and the same `RiskManager` the live bot uses, and prints
 win rate, break-even win rate, average win/loss, net result and worst
