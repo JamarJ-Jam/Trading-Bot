@@ -120,10 +120,24 @@ class TradingBot:
         self.currency = (self.client.account or {}).get("currency") or "USD"
         await self._adopt_open_contracts()
         await self._warm_up()
+        self._reconcile_direction()
         first = await self.client.request({"ticks": self.cfg.symbol, "subscribe": 1})
         await self.handle_message(first)
         log.info("Watching %s with strategy %r%s", self.cfg.symbol, self.strategy.name,
                  " (dry run)" if self.cfg.dry_run else "")
+
+    def _reconcile_direction(self) -> None:
+        """EXIT_ON_REVERSE: if the trend turned while the bot was offline, the
+        crossover was missed, so close trades pointing the old way now."""
+        if not self.cfg.exit_on_reverse or self._placing:
+            return
+        side = self.strategy.current_direction()
+        wrong = [t for t in self.open_trades.values() if side and t.direction
+                 and t.direction != side]
+        if wrong:
+            log.info("Trend is %s but %d open trade(s) point the other way", side, len(wrong))
+            self._placing = True
+            self._spawn(self._reverse(wrong, Signal(side, "trend turned while the bot was offline")))
 
     async def _warm_up(self) -> None:
         """Feed recent candles to a candle-based strategy so it can trade
@@ -158,10 +172,14 @@ class TradingBot:
         restart or a dropped connection. The bot assumes it owns every open
         contract on the account, so use an account dedicated to the bot."""
         ids = set(self.risk.state.open_stakes) | set(self.open_trades)
+        directions: dict[str, str] = {}
         try:
             portfolio = await self.client.request({"portfolio": 1})
             for c in (portfolio.get("portfolio") or {}).get("contracts") or []:
                 cid = str(c.get("contract_id"))
+                kind = str(c.get("contract_type") or "")
+                if kind in ("MULTUP", "MULTDOWN"):
+                    directions[cid] = "UP" if kind == "MULTUP" else "DOWN"
                 if cid not in self.risk.state.open_stakes:
                     stake = float(c.get("buy_price") or 0)
                     log.warning("Found open contract %s not in state; tracking it", cid)
@@ -172,7 +190,8 @@ class TradingBot:
 
         for cid in ids:
             stake = self.risk.state.open_stakes.get(cid, 0.0)
-            self.open_trades.setdefault(cid, OpenTrade(cid, stake))
+            trade = self.open_trades.setdefault(cid, OpenTrade(cid, stake))
+            trade.direction = trade.direction or directions.get(cid, "")
             await self._track(cid)
 
     # ---- incoming messages ------------------------------------------------

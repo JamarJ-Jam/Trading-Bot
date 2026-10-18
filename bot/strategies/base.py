@@ -29,5 +29,10 @@ class Strategy:
         """Called on every price update. Return a Signal to request a trade."""
         raise NotImplementedError
 
+    def current_direction(self) -> str | None:
+        """Optional: which way the strategy currently leans ("UP"/"DOWN"),
+        used to catch up on a reversal missed while the bot was offline."""
+        return None
+
     def on_trade_closed(self, profit: float) -> None:
         """Optional hook: called when one of the bot's trades closes."""
