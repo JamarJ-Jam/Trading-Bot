@@ -31,6 +31,7 @@ from .chart import write_chart
 from .config import Config, ConfigError
 from .risk import RiskManager
 from .strategies import Strategy, make_strategy
+from .strategies.base import Signal
 
 PUBLIC_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 MAX_PER_REQUEST = 5000
@@ -235,6 +236,7 @@ def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
 
         for c in candles:
             clock.now = datetime.fromtimestamp(c.epoch, timezone.utc)
+            rejoin = False
             if open_trade is not None:
                 if payout is not None:
                     result = _check_binary(cfg, open_trade, c, payout)
@@ -249,6 +251,10 @@ def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
                     strategy.on_trade_closed(profit)
                     trades.append(open_trade)
                     open_trade = None
+                    # Like the live bot: after Deriv's expiry closes a trade,
+                    # EXIT_ON_REVERSE rejoins the trend (not after a stop out).
+                    rejoin = (cfg.exit_on_reverse and payout is None
+                              and reason == "time limit")
 
             # Feed the candle close at its open time and again at its close
             # time, so candle-based strategies see the candle finish now.
@@ -265,6 +271,8 @@ def simulate(cfg: Config, strategy: Strategy, candles: list[Candle],
                 strategy.on_trade_closed(profit)
                 trades.append(open_trade)
                 open_trade = None
+            if signal is None and rejoin and strategy.current_direction():
+                signal = Signal(strategy.current_direction(), "rejoin after expiry")
             if signal is None or open_trade is not None:
                 continue
             allowed, _ = risk.check(cfg.stake)
