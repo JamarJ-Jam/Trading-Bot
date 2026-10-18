@@ -1,0 +1,16 @@
+# Secrets: never commit these
+.env
+*.env
+!.env.example
+
+# Bot output
+logs/
+state/
+STOP
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
