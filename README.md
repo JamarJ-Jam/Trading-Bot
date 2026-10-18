@@ -2,8 +2,8 @@
 
 A Python bot that trades Deriv **multipliers** over the Deriv API. It starts on
 the demo account, enforces hard risk limits, and logs every trade. The trading
-strategy is pluggable; the only built-in ones are a watch-only mode and a
-demo-only plumbing test.
+strategy is pluggable. Built in: `watch` (never trades), `demo_test` (demo-only
+plumbing test) and `trend` (moving-average crossover).
 
 **New here? Follow [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).**
 
@@ -55,14 +55,39 @@ throttled to 2 per second, far under Deriv's published limits.
 ```
 bot/
   __main__.py      entry point (python -m bot, --check)
+  backtest.py      python -m bot.backtest: replay past prices
   config.py        settings from .env, with validation
   deriv_client.py  REST + WebSocket client, req_id matching, throttle
   risk.py          hard limits and persisted daily state
   bot.py           main loop, trading, reconnect, kill switch
   trade_log.py     logs/bot.log and logs/trades.csv
-  strategies/      base.py (interface), watch.py, demo_test.py
+  strategies/      base.py (interface), watch.py, demo_test.py, trend.py
 tests/             offline tests, incl. a fake Deriv WebSocket server
 ```
+
+## Strategies
+
+| `STRATEGY=` | What it does |
+|---|---|
+| `watch` | Logs prices, never trades (default). |
+| `demo_test` | One tiny alternating trade every few minutes to prove the plumbing. Demo only. |
+| `trend` | Groups prices into candles (`TREND_CANDLE_SECONDS`, default 60) and trades UP when the fast EMA (`TREND_FAST`, 9) crosses above the slow EMA (`TREND_SLOW`, 21), DOWN when it crosses below. Exits come from `MAX_TRADE_MINUTES`, `TAKE_PROFIT` and `STOP_LOSS`. |
+
+## Backtesting
+
+```
+python -m bot.backtest --strategy trend                 # ~2 weeks of 1-minute candles
+python -m bot.backtest --strategy trend --symbol frxEURUSD
+python -m bot.backtest --file data/1HZ100V_60.csv       # rerun on saved prices
+```
+
+Downloads candles from Deriv's public feed (no token needed), replays them
+through the strategy and the same `RiskManager` the live bot uses, and prints
+win rate, break-even win rate, average win/loss, net result and worst
+drawdown. Every simulated trade goes to `logs/backtest_<strategy>_<symbol>.csv`.
+P/L is modelled as stake x multiplier x price move, capped at losing the stake,
+and is **before Deriv's commission and spread** (`--commission` adds a cost).
+When a candle touches both a loss exit and a profit exit, the loss is assumed.
 
 ## Adding a strategy
 

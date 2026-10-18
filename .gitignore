@@ -14,3 +14,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Downloaded price history
+data/

@@ -2,11 +2,13 @@
 
 from .base import Signal, Strategy
 from .demo_test import DemoTest
+from .trend import TrendFollow
 from .watch import WatchOnly
 
 STRATEGIES: dict[str, type[Strategy]] = {
     WatchOnly.name: WatchOnly,
     DemoTest.name: DemoTest,
+    TrendFollow.name: TrendFollow,
 }
 
 

@@ -93,16 +93,36 @@ Check it worked by opening a terminal (Windows: "Command Prompt"; Mac:
 
 Easiest: on the GitHub page for the repository, click the green **Code**
 button, then **Download ZIP**, and unzip it somewhere like your Documents
-folder. (Until the pull request is merged, switch to the branch
-`claude/deriv-bot-scaffold-h6ehfk` on GitHub first, then download.)
+folder.
 
 If you have git installed, this does the same:
 
 ```
 git clone https://github.com/JamarJ-Jam/Trading-Bot.git
 cd Trading-Bot
-git checkout claude/deriv-bot-scaffold-h6ehfk
 ```
+
+### Using WSL Ubuntu instead (works fine)
+
+If you already use WSL, skip installing Python on Windows and do steps 4 to 6 inside Ubuntu:
+
+```
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip git
+cd ~
+git clone https://github.com/JamarJ-Jam/Trading-Bot.git
+cd Trading-Bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+code .
+```
+
+- Keep the folder in your Linux home (`~/Trading-Bot`), not under `/mnt/c/...`. It's faster and avoids file-permission oddities.
+- `code .` opens VS Code connected to WSL (install the **WSL** extension if it asks). Edit `.env` there, then pick the `.venv` interpreter when the Python extension prompts.
+- Python 3.10 or newer is fine, which is what Ubuntu 22.04 and later ship.
+- Run the bot from the VS Code terminal with `python -m bot --check`, then `python -m bot`. To use the kill switch, run `touch STOP` in a second terminal in the same folder.
+- The bot stops if WSL shuts down, so keep that terminal open and the PC awake while it runs.
 
 ## 5. Set up and test the connection
 
