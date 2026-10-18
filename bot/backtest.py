@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,7 @@ from .strategies import Strategy, make_strategy
 
 PUBLIC_WS = "wss://api.derivws.com/trading/v1/options/ws/public"
 MAX_PER_REQUEST = 5000
+MAX_EMPTY_DAYS = 4
 
 
 @dataclass
@@ -56,13 +58,23 @@ class Trade:
 
 # ---- price data --------------------------------------------------------------
 
-async def fetch_candles(symbol: str, granularity: int, count: int) -> list[Candle]:
-    """Download candles from Deriv's public feed, newest first, paging back."""
-    import websockets
+async def fetch_candles(symbol: str, granularity: int, count: int,
+                        connect=None, now: int | None = None) -> list[Candle]:
+    """Download candles from Deriv's public feed, newest first, paging back.
+
+    Closed markets (forex at the weekend) answer "latest" with no candles,
+    so an empty answer steps the window back a day at a time, up to a few
+    days, before giving up.
+    """
+    if connect is None:
+        import websockets
+        connect = websockets.connect
 
     candles: dict[int, Candle] = {}
     end: int | str = "latest"
-    async with websockets.connect(PUBLIC_WS, max_size=2**24) as ws:
+    empty_steps = 0
+    now = now or int(time.time())
+    async with connect(PUBLIC_WS, max_size=2**24) as ws:
         req_id = 0
         while len(candles) < count:
             req_id += 1
@@ -79,7 +91,12 @@ async def fetch_candles(symbol: str, granularity: int, count: int) -> list[Candl
                 raise RuntimeError(msg["error"].get("message", "price history request failed"))
             batch = msg.get("candles") or []
             if not batch:
-                break
+                empty_steps += 1
+                if empty_steps > MAX_EMPTY_DAYS:
+                    break
+                end = (now if end == "latest" else int(end)) - 86400
+                continue
+            empty_steps = 0
             for c in batch:
                 candles[int(c["epoch"])] = Candle(int(c["epoch"]), float(c["open"]),
                                                   float(c["high"]), float(c["low"]),
@@ -273,6 +290,10 @@ def main(argv: list[str] | None = None) -> int:
             candles = asyncio.run(fetch_candles(cfg.symbol, args.granularity, args.candles))
         except (OSError, RuntimeError) as exc:
             print(f"Could not download prices: {exc}", file=sys.stderr)
+            return 1
+        if not candles:
+            print(f"Deriv returned no prices for {cfg.symbol}. Check the symbol name, "
+                  "or try again when its market is open.", file=sys.stderr)
             return 1
         saved = Path("data") / f"{cfg.symbol}_{args.granularity}.csv"
         save_candles(saved, candles)
