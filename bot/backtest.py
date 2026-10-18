@@ -124,6 +124,47 @@ def load_candles(path: Path) -> list[Candle]:
                        float(r["low"]), float(r["close"])) for r in csv.DictReader(f)]
 
 
+# ---- long daily history from FRED ---------------------------------------------
+
+# Deriv only serves about a year of daily candles. The US Federal Reserve
+# publishes free daily exchange rates going back decades (one noon rate per
+# day, so open, high, low and close are the same).
+FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+FRED_SERIES = {
+    # symbol: (series, invert) - invert when FRED quotes the other way round
+    "frxEURUSD": ("DEXUSEU", False),
+    "frxGBPUSD": ("DEXUSUK", False),
+    "frxAUDUSD": ("DEXUSAL", False),
+    "frxNZDUSD": ("DEXUSNZ", False),
+    "frxUSDJPY": ("DEXJPUS", False),
+    "frxUSDCAD": ("DEXCAUS", False),
+    "frxUSDCHF": ("DEXSZUS", False),
+}
+
+
+def parse_fred(text: str, invert: bool = False) -> list[Candle]:
+    candles = []
+    for row in csv.reader(text.splitlines()[1:]):
+        if len(row) < 2 or row[1] in ("", "."):
+            continue  # FRED leaves holidays blank
+        day = datetime.strptime(row[0], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        price = float(row[1])
+        if invert:
+            price = 1 / price
+        candles.append(Candle(int(day.timestamp()), price, price, price, price))
+    return candles
+
+
+def fetch_fred(symbol: str, opener=None) -> list[Candle]:
+    if symbol not in FRED_SERIES:
+        raise RuntimeError(f"no FRED series for {symbol}; options: {', '.join(FRED_SERIES)}")
+    series, invert = FRED_SERIES[symbol]
+    if opener is None:
+        from urllib.request import urlopen as opener
+    with opener(FRED_URL.format(series=series), timeout=60) as resp:
+        return parse_fred(resp.read().decode("utf-8"), invert)
+
+
 # ---- simulation -------------------------------------------------------------
 
 class SimClock:
@@ -261,10 +302,14 @@ def combined_report(results: list[tuple[str, list[Trade]]]) -> str:
     return "\n".join(lines)
 
 
-def _download(symbol: str, granularity: int, count: int) -> list[Candle] | None:
-    print(f"Downloading {count} candles of {symbol}...", file=sys.stderr)
+def _download(symbol: str, granularity: int, count: int,
+              source: str = "deriv") -> list[Candle] | None:
+    print(f"Downloading {count} candles of {symbol} from {source}...", file=sys.stderr)
     try:
-        candles = asyncio.run(fetch_candles(symbol, granularity, count))
+        if source == "fred":
+            candles = fetch_fred(symbol)[-count:]
+        else:
+            candles = asyncio.run(fetch_candles(symbol, granularity, count))
     except (OSError, RuntimeError) as exc:
         print(f"Could not download prices for {symbol}: {exc}", file=sys.stderr)
         return None
@@ -272,7 +317,8 @@ def _download(symbol: str, granularity: int, count: int) -> list[Candle] | None:
         print(f"Deriv returned no prices for {symbol}. Check the symbol name, "
               "or try again when its market is open.", file=sys.stderr)
         return None
-    saved = Path("data") / f"{symbol}_{granularity}.csv"
+    suffix = "_fred" if source == "fred" else ""
+    saved = Path("data") / f"{symbol}_{granularity}{suffix}.csv"
     save_candles(saved, candles)
     print(f"Saved prices to {saved} (reuse with --file)", file=sys.stderr)
     return candles
@@ -290,7 +336,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--file", type=Path, help="use a saved CSV of candles instead of downloading")
     parser.add_argument("--commission", type=float, default=0.0,
                         help="cost per trade as a fraction of stake x multiplier (default 0)")
+    parser.add_argument("--source", choices=["deriv", "fred"], default="deriv",
+                        help="where to get prices: deriv (default) or fred, which has "
+                        "decades of daily forex rates (use with --granularity 86400)")
     args = parser.parse_args(argv)
+    if args.source == "fred" and args.granularity != 86400:
+        print("--source fred only has daily prices: add --granularity 86400", file=sys.stderr)
+        return 2
 
     load_dotenv()
     # The simulated risk manager would otherwise print every losing-streak pause.
@@ -324,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.file:
             candles = load_candles(args.file)
         else:
-            candles = _download(symbol, args.granularity, args.candles)
+            candles = _download(symbol, args.granularity, args.candles, args.source)
             if candles is None:
                 if len(symbols) == 1:
                     return 1

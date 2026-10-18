@@ -218,3 +218,27 @@ def test_backtest_cli_several_symbols(tmp_path, monkeypatch, capsys):
     assert "Strategy breakout on frxEURUSD" in out and "Strategy breakout on frxGBPUSD" in out
     assert "All symbols:" in out and "frxGBPUSD: 3 trades" in out
     assert (tmp_path / "logs" / "backtest_breakout_frxGBPUSD.csv").exists()
+
+
+def test_parse_fred_skips_holidays():
+    text = "observation_date,DEXUSEU\n2024-01-01,\n2024-01-02,1.0956\n2024-01-03,.\n2024-01-04,1.0950\n"
+    candles = backtest.parse_fred(text)
+    assert [c.close for c in candles] == [1.0956, 1.0950]
+    assert candles[0].epoch == 1704153600 and candles[0].high == candles[0].low == 1.0956
+    assert backtest.parse_fred(text, invert=True)[0].close == pytest.approx(1 / 1.0956)
+
+
+def test_backtest_cli_fred_source(tmp_path, monkeypatch, capsys):
+    closes = [1.0 + 0.1 * math.sin(i / 30) for i in range(800)]
+    monkeypatch.setattr(backtest, "fetch_fred", lambda symbol: candles_from(closes, 86400))
+    monkeypatch.chdir(tmp_path)
+    for k in ("DERIV_API_TOKEN", "DERIV_APP_ID", "STRATEGY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("TREND_CANDLE_SECONDS", "86400")
+    monkeypatch.setenv("MAX_TRADE_MINUTES", "40320")
+    assert backtest.main(["--strategy", "trend", "--source", "fred", "--granularity", "86400",
+                          "--symbol", "frxEURUSD,frxUSDJPY"]) == 0
+    out = capsys.readouterr().out
+    assert "All symbols:" in out and "frxUSDJPY:" in out
+    assert (tmp_path / "data" / "frxEURUSD_86400_fred.csv").exists()
+    assert backtest.main(["--source", "fred"]) == 2
