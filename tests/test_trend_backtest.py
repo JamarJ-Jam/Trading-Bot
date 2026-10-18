@@ -254,3 +254,30 @@ def test_simulate_exit_on_reverse_holds_until_opposite_signal(cfg):
     assert trades[0].profit > 0
     # the reversal opened a DOWN trade straight away, on the same candle
     assert len(trades) == 1  # still open at the end, so not reported
+
+
+def test_simulate_rise_fall_pays_fixed_amounts(cfg):
+    cfg = replace(cfg, max_trade_minutes=5, max_daily_loss=50.0, max_trades_per_day=500,
+                  max_consecutive_losses=1000)
+    closes = [100.0] * 30 + [100 * (1.0005 ** i) for i in range(1, 60)]
+    trades = simulate(cfg, TrendFollow(fast=3, slow=8), candles_from(closes), 60, payout=0.9)
+    assert trades and {t.reason for t in trades} <= {"won", "lost"}
+    assert all(t.profit in (0.9, -1.0) for t in trades)
+    with pytest.raises(ValueError):
+        simulate(replace(cfg, max_trade_minutes=0), TrendFollow(fast=3, slow=8),
+                 candles_from(closes), 60, payout=0.9)
+
+
+def test_backtest_cli_rise_fall_writes_chart(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "prices.csv"
+    closes = [100 + 2 * math.sin(i / 15) for i in range(600)]
+    backtest.save_candles(path, candles_from(closes))
+    monkeypatch.chdir(tmp_path)
+    for k in ("DERIV_API_TOKEN", "DERIV_APP_ID", "STRATEGY"):
+        monkeypatch.delenv(k, raising=False)
+    assert backtest.main(["--strategy", "trend", "--file", str(path), "--payout", "0.95"]) == 0
+    out = capsys.readouterr().out
+    assert "Rise/Fall paying 95%" in out
+    chart = tmp_path / "logs" / "backtest_trend_risefall.html"
+    assert chart.exists() and "<svg" in chart.read_text()
+    assert backtest.main(["--strategy", "trend", "--file", str(path), "--payout", "95"]) == 2

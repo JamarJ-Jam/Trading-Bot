@@ -95,9 +95,18 @@ MAX_TRADE_MINUTES=480 python -m bot.backtest --strategy breakout --granularity 9
 Several symbols separated by commas each get their own report, then a
 combined total.
 
+Every run also writes `logs/backtest_<strategy>_<kind>.html`: a chart of each
+symbol's running profit with a hover readout. Open it in a browser (from WSL:
+`explorer.exe logs/backtest_trend_multiplier.html`).
+
+`--payout 0.95` simulates Rise/Fall contracts instead of multipliers: the same
+signals, each a fixed bet that pays 95% of the stake if the price is on the
+right side after `MAX_TRADE_MINUTES`, and loses the stake otherwise.
+
 Deriv only serves about a year of daily candles. For long daily tests,
 `--source fred` downloads decades of free daily rates from the US Federal
-Reserve (FRED) for the major pairs instead (one rate per day, so stop-outs
+Reserve (FRED) for the major pairs, plus Bitcoin and Ethereum (`cryBTCUSD`,
+`cryETHUSD`, from about 2015), instead (one rate per day, so stop-outs
 during the day aren't seen):
 
 ```
