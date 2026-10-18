@@ -81,3 +81,58 @@ def test_backtest_cli_from_file(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Strategy trend" in out and "Trades" in out
     assert (tmp_path / "logs" / "backtest_trend_1HZ100V.csv").exists()
+
+
+class FakeFeed:
+    """Answers ticks_history like Deriv: nothing for 'latest' while closed."""
+
+    def __init__(self, last_open_epoch):
+        self.last = last_open_epoch
+        self.sent = []
+        self._replies = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def send(self, raw):
+        import json
+        req = json.loads(raw)
+        self.sent.append(req)
+        end = self.last if req["end"] == "latest" else min(req["end"], self.last)
+        if req["end"] == "latest":
+            candles = []  # market closed: "latest" comes back empty
+        else:
+            candles = [{"epoch": end - 60 * i, "open": 1, "high": 1, "low": 1, "close": 1}
+                       for i in range(req["count"])]
+        self._replies.append(json.dumps({"req_id": req["req_id"], "candles": candles}))
+
+    async def recv(self):
+        return self._replies.pop(0)
+
+
+async def test_fetch_steps_back_over_a_closed_market():
+    now = 1_800_000_000
+    feed = FakeFeed(last_open_epoch=now - 2 * 86400 - 600)  # closed for ~2 days
+    candles = await backtest.fetch_candles("frxEURUSD", 60, 50,
+                                           connect=lambda *a, **k: feed, now=now)
+    assert len(candles) == 50
+    assert feed.sent[0]["end"] == "latest"
+    assert feed.sent[1]["end"] == now - 86400
+
+
+async def test_fetch_gives_up_on_unknown_symbol():
+    class Empty(FakeFeed):
+        async def send(self, raw):
+            import json
+            req = json.loads(raw)
+            self.sent.append(req)
+            self._replies.append(json.dumps({"req_id": req["req_id"], "candles": []}))
+
+    feed = Empty(0)
+    candles = await backtest.fetch_candles("NOPE", 60, 50, connect=lambda *a, **k: feed,
+                                           now=1_800_000_000)
+    assert candles == []
+    assert len(feed.sent) == backtest.MAX_EMPTY_DAYS + 1
