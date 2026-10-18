@@ -3,7 +3,8 @@
 A Python bot that trades Deriv **multipliers** over the Deriv API. It starts on
 the demo account, enforces hard risk limits, and logs every trade. The trading
 strategy is pluggable. Built in: `watch` (never trades), `demo_test` (demo-only
-plumbing test) and `trend` (moving-average crossover).
+plumbing test), `trend` (moving-average crossover) and `mean_revert`
+(Bollinger-band fade).
 
 **New here? Follow [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).**
 
@@ -61,7 +62,7 @@ bot/
   risk.py          hard limits and persisted daily state
   bot.py           main loop, trading, reconnect, kill switch
   trade_log.py     logs/bot.log and logs/trades.csv
-  strategies/      base.py (interface), watch.py, demo_test.py, trend.py
+  strategies/      base.py (interface), watch.py, demo_test.py, trend.py, mean_revert.py
 tests/             offline tests, incl. a fake Deriv WebSocket server
 ```
 
@@ -72,6 +73,7 @@ tests/             offline tests, incl. a fake Deriv WebSocket server
 | `watch` | Logs prices, never trades (default). |
 | `demo_test` | One tiny alternating trade every few minutes to prove the plumbing. Demo only. |
 | `trend` | Groups prices into candles (`TREND_CANDLE_SECONDS`, default 60) and trades UP when the fast EMA (`TREND_FAST`, 9) crosses above the slow EMA (`TREND_SLOW`, 21), DOWN when it crosses below. Exits come from `MAX_TRADE_MINUTES`, `TAKE_PROFIT` and `STOP_LOSS`. |
+| `mean_revert` | Bollinger bands of `MR_PERIOD` (20) candles at `MR_STD` (2.0) standard deviations, on `MR_CANDLE_SECONDS` (60) candles. Signals UP on the first close below the lower band and DOWN on the first close above the upper band, betting on a snap back. Same exits as `trend`. |
 
 ## Backtesting
 

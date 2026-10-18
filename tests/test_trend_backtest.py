@@ -136,3 +136,21 @@ async def test_fetch_gives_up_on_unknown_symbol():
                                            now=1_800_000_000)
     assert candles == []
     assert len(feed.sent) == backtest.MAX_EMPTY_DAYS + 1
+
+
+def test_mean_revert_fades_spikes_once():
+    from bot.strategies.mean_revert import MeanRevert
+    calm = [100.0 + (0.1 if i % 2 else -0.1) for i in range(30)]
+    closes = calm + [95.0, 94.5, 94.0] + calm + [105.0]
+    signals = feed_candles(MeanRevert(period=20, width=2.0), closes)
+    # one UP on the first close below the band (not on the next two), one DOWN at the spike up
+    assert [d for _, d in signals] == ["UP", "DOWN"]
+    assert signals[0][0] == 30 and signals[1][0] == len(closes) - 1
+
+
+def test_mean_revert_registered_and_backtests(cfg):
+    from bot.strategies.mean_revert import MeanRevert
+    assert isinstance(make_strategy("mean_revert"), MeanRevert)
+    closes = [100 + 2 * math.sin(i / 7) + (3 if i % 97 == 0 else 0) for i in range(2000)]
+    trades = simulate(cfg, MeanRevert(period=20, width=2.0), candles_from(closes), 60)
+    assert trades and all(t.profit >= -cfg.stake for t in trades)
