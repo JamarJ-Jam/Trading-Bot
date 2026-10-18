@@ -75,6 +75,11 @@ tests/             offline tests, incl. a fake Deriv WebSocket server
 | `trend` | Groups prices into candles (`TREND_CANDLE_SECONDS`, default 60) and trades UP when the fast EMA (`TREND_FAST`, 9) crosses above the slow EMA (`TREND_SLOW`, 21), DOWN when it crosses below. Exits come from `MAX_TRADE_MINUTES`, `TAKE_PROFIT` and `STOP_LOSS`. |
 | `mean_revert` | Bollinger bands of `MR_PERIOD` (20) candles at `MR_STD` (2.0) standard deviations, on `MR_CANDLE_SECONDS` (60) candles. Signals UP on the first close below the lower band and DOWN on the first close above the upper band, betting on a snap back. Same exits as `trend`. |
 
+`trend` and `mean_revert` preload their recent candles from Deriv at startup,
+so they can trade straight away even on hourly candles. The candle size must
+be one Deriv offers (60, 120, 180, 300, 600, 900, 1800, 3600, 7200, 14400,
+28800 or 86400 seconds); otherwise the bot builds history from live prices.
+
 ## Backtesting
 
 ```

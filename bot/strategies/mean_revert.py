@@ -39,6 +39,7 @@ class MeanRevert(Strategy):
         self.candle_seconds = candle_seconds or _env_int("MR_CANDLE_SECONDS", 60)
         if self.period < 2 or self.width <= 0:
             raise ValueError("MR_PERIOD must be at least 2 and MR_STD more than 0")
+        self.warmup_candles = self.period + 2
         self.closes: deque[float] = deque(maxlen=self.period)
         self._bucket: int | None = None
         self._close: float | None = None

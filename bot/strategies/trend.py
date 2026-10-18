@@ -44,6 +44,7 @@ class TrendFollow(Strategy):
         self.candle_seconds = candle_seconds or _env_int("TREND_CANDLE_SECONDS", 60)
         if not 1 <= self.fast_len < self.slow_len:
             raise ValueError("TREND_FAST must be at least 1 and smaller than TREND_SLOW")
+        self.warmup_candles = self.slow_len + 2
         self.fast = Ema(self.fast_len)
         self.slow = Ema(self.slow_len)
         self.candles_seen = 0

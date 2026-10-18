@@ -20,6 +20,10 @@ class Strategy:
     # Strategies that exist only to test the plumbing set this to True,
     # and the bot refuses to run them on a real account.
     demo_only = False
+    # Candle-based strategies set these so the bot can preload recent
+    # candles at startup instead of waiting hours to build its own history.
+    candle_seconds = 0
+    warmup_candles = 0
 
     def on_tick(self, price: float, epoch: int) -> Signal | None:
         """Called on every price update. Return a Signal to request a trade."""
