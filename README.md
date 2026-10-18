@@ -32,7 +32,7 @@ read from the environment only, never committed, and redacted from logs.
 | Max trades per day / open at once | `MAX_TRADES_PER_DAY`, `MAX_OPEN_TRADES` | 50 / 1 |
 | Pause after a losing streak | `MAX_CONSECUTIVE_LOSSES`, `PAUSE_MINUTES` | 3 / 30 |
 | Close trades open too long | `MAX_TRADE_MINUTES` (0 = no limit) | 10 |
-| Close a trade when the strategy signals the other way | `EXIT_ON_REVERSE=true` | false |
+| Close a trade when the strategy signals the other way, and reopen in the trend's direction after a Deriv expiry or restart | `EXIT_ON_REVERSE=true` | false |
 | Kill switch: close trades and exit | create the file `STOP` | |
 | Log decisions without buying | `DRY_RUN=true` | false |
 

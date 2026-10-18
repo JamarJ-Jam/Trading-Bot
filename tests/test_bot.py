@@ -289,3 +289,24 @@ def test_trend_reports_current_direction():
     for i in range(10):
         t.on_tick(100 + i, i * 60)
     assert t.current_direction() == "UP"
+
+
+async def test_rejoins_trend_after_deriv_expires_the_trade(cfg):
+    from dataclasses import replace as dc_replace
+
+    client = PortfolioClient()
+    bot = make_bot(dc_replace(cfg, exit_on_reverse=True), client, Leaning("UP"))
+    await bot._adopt_open_contracts()
+    bot._on_contract({"contract_id": 111, "is_sold": 1, "is_expired": 1, "profit": 0.4})
+    await asyncio.gather(*bot._tasks)
+    assert bot.open_trades["555"].direction == "UP"
+
+
+async def test_no_rejoin_after_stop_out(cfg):
+    from dataclasses import replace as dc_replace
+
+    client = PortfolioClient()
+    bot = make_bot(dc_replace(cfg, exit_on_reverse=True), client, Leaning("UP"))
+    await bot._adopt_open_contracts()
+    bot._on_contract({"contract_id": 111, "is_sold": 1, "profit": -1.0})
+    assert not bot._tasks and "proposal" not in client.kinds()

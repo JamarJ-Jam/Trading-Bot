@@ -127,17 +127,24 @@ class TradingBot:
                  " (dry run)" if self.cfg.dry_run else "")
 
     def _reconcile_direction(self) -> None:
-        """EXIT_ON_REVERSE: if the trend turned while the bot was offline, the
-        crossover was missed, so close trades pointing the old way now."""
+        """EXIT_ON_REVERSE keeps one trade open in the trend's direction.
+        The bot can miss a turn while offline, and Deriv closes multipliers
+        at expiry (7 days on crypto), so after a restart or an expiry: close
+        trades pointing the old way, or join the trend if nothing is open."""
         if not self.cfg.exit_on_reverse or self._placing:
             return
         side = self.strategy.current_direction()
-        wrong = [t for t in self.open_trades.values() if side and t.direction
-                 and t.direction != side]
+        if not side:
+            return
+        wrong = [t for t in self.open_trades.values() if t.direction and t.direction != side]
         if wrong:
             log.info("Trend is %s but %d open trade(s) point the other way", side, len(wrong))
             self._placing = True
             self._spawn(self._reverse(wrong, Signal(side, "trend turned while the bot was offline")))
+        elif not self.open_trades:
+            log.info("No open trade; joining the %s trend", side)
+            self._placing = True
+            self._spawn(self.try_trade(Signal(side, f"trend is still {side}")))
 
     async def _warm_up(self) -> None:
         """Feed recent candles to a candle-based strategy so it can trade
@@ -241,6 +248,9 @@ class TradingBot:
             reason=poc.get("status", ""),
         )
         log.info("Closed %s: %+.2f. %s", cid, profit, self.risk.summary())
+        # Closed by Deriv (expiry or take profit), not by the bot or a stop out.
+        if not trade.selling and profit > -0.99 * trade.stake:
+            self._reconcile_direction()
 
     # ---- trading ---------------------------------------------------------
 
