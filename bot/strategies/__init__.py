@@ -1,6 +1,7 @@
 """Available strategies. Add a new one here to make it selectable with STRATEGY=."""
 
 from .base import Signal, Strategy
+from .breakout import SessionBreakout
 from .demo_test import DemoTest
 from .mean_revert import MeanRevert
 from .trend import TrendFollow
@@ -11,6 +12,7 @@ STRATEGIES: dict[str, type[Strategy]] = {
     DemoTest.name: DemoTest,
     TrendFollow.name: TrendFollow,
     MeanRevert.name: MeanRevert,
+    SessionBreakout.name: SessionBreakout,
 }
 
 

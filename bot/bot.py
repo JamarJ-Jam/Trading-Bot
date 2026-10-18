@@ -49,6 +49,7 @@ class TradingBot:
         self.open_trades: dict[str, OpenTrade] = {}
         self.currency = "USD"
         self._placing = False
+        self._warmed_up = False
         self._tasks: set[asyncio.Task] = set()
         self._stop = asyncio.Event()
         self._last_refusal = ""
@@ -118,10 +119,39 @@ class TradingBot:
     async def _after_connect(self) -> None:
         self.currency = (self.client.account or {}).get("currency") or "USD"
         await self._adopt_open_contracts()
+        await self._warm_up()
         first = await self.client.request({"ticks": self.cfg.symbol, "subscribe": 1})
         await self.handle_message(first)
         log.info("Watching %s with strategy %r%s", self.cfg.symbol, self.strategy.name,
                  " (dry run)" if self.cfg.dry_run else "")
+
+    async def _warm_up(self) -> None:
+        """Feed recent candles to a candle-based strategy so it can trade
+        straight away. Runs once; after a reconnect the strategy keeps its
+        history. Signals during warm-up are ignored."""
+        if self._warmed_up or not self.strategy.warmup_candles:
+            return
+        self._warmed_up = True
+        try:
+            msg = await self.client.request({
+                "ticks_history": self.cfg.symbol, "style": "candles",
+                "granularity": self.strategy.candle_seconds,
+                "count": self.strategy.warmup_candles + 1, "end": "latest",
+            })
+        except DerivError as exc:
+            log.warning("Could not preload candles (%s); building history from live prices", exc)
+            return
+        candles = msg.get("candles") or []
+        # The last candle is the one still forming; live ticks carry it on.
+        for c in candles:
+            try:
+                self.strategy.on_tick(float(c["close"]), int(c["epoch"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if candles:
+            log.info("Preloaded %d candles of %ss", len(candles), self.strategy.candle_seconds)
+        else:
+            log.info("No recent candles (market closed?); building history from live prices")
 
     async def _adopt_open_contracts(self) -> None:
         """Re-attach to contracts that are open on the account, e.g. after a

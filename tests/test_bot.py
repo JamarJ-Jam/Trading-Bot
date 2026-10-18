@@ -138,3 +138,55 @@ async def test_reconnect_adopts_open_contracts(cfg):
     await bot._after_connect()
     assert "777" in bot.open_trades
     assert {"proposal_open_contract": 1, "contract_id": 777, "subscribe": 1} in client.sent
+
+
+class CandleClient(FakeClient):
+    def __init__(self, candles):
+        super().__init__()
+        self.candles = candles
+
+    async def request(self, payload):
+        if "ticks_history" in payload:
+            self.sent.append(payload)
+            return {"msg_type": "candles", "candles": self.candles}
+        return await super().request(payload)
+
+
+async def test_warm_up_preloads_candles_once(cfg):
+    from bot.strategies.mean_revert import MeanRevert
+
+    strategy = MeanRevert(period=3, width=1.0, candle_seconds=60)
+    candles = [{"epoch": 60 * i, "close": 100.0 + i % 2} for i in range(6)]
+    client = CandleClient(candles)
+    bot = make_bot(cfg, client, strategy)
+
+    await bot._warm_up()
+    await bot._warm_up()
+
+    history = [p for p in client.sent if "ticks_history" in p]
+    assert len(history) == 1
+    assert history[0]["granularity"] == 60 and history[0]["count"] == 6
+    # Five closed candles fed; the last one is still forming.
+    assert list(strategy.closes) == [100.0, 101.0, 100.0]
+    assert not bot._tasks  # warm-up signals never trade
+
+
+async def test_warm_up_failure_is_not_fatal(cfg):
+    from bot.strategies.mean_revert import MeanRevert
+
+    class Failing(FakeClient):
+        async def request(self, payload):
+            if "ticks_history" in payload:
+                raise DerivError("bad granularity", "InputValidationFailed")
+            return await super().request(payload)
+
+    strategy = MeanRevert(period=3, width=1.0, candle_seconds=45)
+    bot = make_bot(cfg, Failing(), strategy)
+    await bot._warm_up()
+    assert not strategy.closes
+
+
+async def test_no_warm_up_for_tick_strategies(cfg):
+    client = FakeClient()
+    await make_bot(cfg, client)._warm_up()
+    assert client.sent == []
