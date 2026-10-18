@@ -281,3 +281,13 @@ def test_backtest_cli_rise_fall_writes_chart(tmp_path, monkeypatch, capsys):
     chart = tmp_path / "logs" / "backtest_trend_risefall.html"
     assert chart.exists() and "<svg" in chart.read_text()
     assert backtest.main(["--strategy", "trend", "--file", str(path), "--payout", "95"]) == 2
+
+
+def test_simulate_exit_on_reverse_rejoins_after_expiry(cfg):
+    cfg = replace(cfg, multiplier=10, max_trade_minutes=10, max_daily_loss=50.0,
+                  max_trades_per_day=500, exit_on_reverse=True)
+    closes = [100.0] * 30 + [100 * 1.002 ** i for i in range(1, 80)]
+    trades = simulate(cfg, TrendFollow(fast=3, slow=8), candles_from(closes), 60)
+    # one crossover, then a fresh UP trade after every expiry
+    assert len(trades) >= 5
+    assert all(t.direction == "UP" and t.reason == "time limit" for t in trades)
