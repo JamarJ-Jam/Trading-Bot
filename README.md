@@ -8,6 +8,16 @@ plumbing test), `trend` (moving-average crossover), `mean_revert`
 
 **New here? Follow [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).**
 
+## Phone app
+
+`python -m server` runs the bot together with a phone web app: start, pause
+and stop the bot, change strategy and limits, switch between demo and real,
+see every trade, and test new strategy ideas in a **strategy lab** (backtest,
+unseen data, 14 days on live prices, then a "ready to go live" alert). Ideas
+come from a no-code rule builder or from an AI model through OpenRouter. It
+is meant to run in Docker on an always-on machine behind a Cloudflare Tunnel:
+**see [docs/APP_GUIDE.md](docs/APP_GUIDE.md).**
+
 ## Quick start
 
 ```
@@ -63,7 +73,18 @@ bot/
   risk.py          hard limits and persisted daily state
   bot.py           main loop, trading, reconnect, kill switch
   trade_log.py     logs/bot.log and logs/trades.csv
-  strategies/      base.py (interface), watch.py, demo_test.py, trend.py, mean_revert.py
+  strategies/      base.py (interface), watch.py, demo_test.py, trend.py, mean_revert.py,
+                   breakout.py, rules.py (strategies built in the app or by the AI)
+server/
+  __main__.py      python -m server (the app), python -m server setup (login)
+  api.py           JSON API and static files
+  auth.py          password + authenticator-app code, signed session cookie
+  settings.py      app settings layered over .env, real-money switch
+  runner.py        runs the bot inside the server: start, pause, stop all
+  lab.py           strategy lab pipeline and readiness checks
+  pipeline.py      background lab testing, paper trading, alerts
+  ai.py            AI strategy ideas through OpenRouter
+web/               the phone app (plain HTML, CSS and JavaScript)
 tests/             offline tests, incl. a fake Deriv WebSocket server
 ```
 
