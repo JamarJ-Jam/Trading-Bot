@@ -1,0 +1,30 @@
+# docker compose up -d --build
+# Runs the app (bot + server) and a Cloudflare Tunnel that puts it on your
+# subdomain. Nothing is opened on the machine's firewall: the tunnel dials out.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_HOST: 0.0.0.0
+      STATE_DIR: state
+      LOG_DIR: logs
+      KILL_SWITCH_FILE: state/STOP
+    volumes:
+      - ./state:/app/state
+      - ./logs:/app/logs
+      - ./data:/app/data
+    # Reachable from this machine only (http://localhost:8000); the world
+    # reaches it through the tunnel.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      - app
