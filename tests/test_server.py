@@ -190,6 +190,24 @@ def test_builder_entry_runs_through_the_pipeline(tmp_path):
     assert c.delete(f"/api/lab/{entry_id}", headers=HEADERS).status_code == 400
 
 
+def test_backtest_cut_off_by_a_restart_runs_again(tmp_path):
+    from server import lab
+    from server.pipeline import LabPipeline
+
+    store = lab.LabStore(tmp_path / "lab.json")
+    entry = store.add(lab.new_entry("Cut off", "ai", ["frxEURUSD"], spec=SPEC))
+    entry["stage"], entry["status"] = "backtest", "Downloading prices and backtesting"
+    store.save(entry)
+
+    async def boot():
+        pipeline = LabPipeline(store, None, None)
+        pipeline.start()
+        await pipeline.stop()
+
+    asyncio.run(boot())
+    assert store.get(entry["id"])["stage"] == "queued"
+
+
 def test_bad_builder_spec_is_rejected(tmp_path):
     c = client(tmp_path)
     login(c)
@@ -234,6 +252,39 @@ def test_ai_ideas_endpoint_adds_ideas_to_the_lab(tmp_path):
     assert added[0]["source"] == "ai" and added[0]["note"] == "because"
     assert seen["auth"] == "Bearer or-key"
     assert "frxEURUSD" in seen["body"]["messages"][1]["content"]
+
+
+def test_parse_ideas_forgives_formatting_slips():
+    loose = {"candle_seconds": "900",
+             "entry": [{"type": "breakout", "lookback": "8"}],
+             "exit": {"stop_loss": "0.5", "take_profit": None, "exit_on_reverse": "false"}}
+    text = json.dumps({"ideas": [
+        {"name": "Strings", "symbols": ["EUR/USD"], "spec": loose},
+        {"name": "Flat", "symbols": ["EURUSD"], "candle_seconds": 3600,
+         "entry": [{"type": "momentum", "lookback": 4}], "exit": {"max_trade_minutes": 60}},
+    ]})
+    good, rejected = parse_ideas(text, ["frxEURUSD"], [])
+    assert rejected == []
+    assert good[0]["symbols"] == ["frxEURUSD"]
+    assert good[0]["spec"]["candle_seconds"] == 900 and good[0]["spec"]["exit"]["stop_loss"] == 0.5
+    assert good[1]["spec"]["entry"][0]["lookback"] == 4
+
+
+def test_ai_asks_once_to_fix_rejected_ideas(tmp_path):
+    bad = {"candle_seconds": 900, "entry": [{"type": "macd"}], "exit": {"max_trade_minutes": 60}}
+    replies = [{"ideas": [{"name": "Bad", "symbols": ["frxEURUSD"], "spec": bad}]},
+               {"ideas": [{"name": "Fixed", "symbols": ["frxEURUSD"], "spec": SPEC}]}]
+    asked = []
+
+    def handler(request: httpx.Request):
+        asked.append(json.loads(request.content)["messages"])
+        content = json.dumps(replies[len(asked) - 1])
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    gen = IdeaGenerator("key", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    good, rejected = asyncio.run(gen.ideas(1, ["frxEURUSD"], [], 10))
+    assert [g["name"] for g in good] == ["Fixed"] and rejected == []
+    assert len(asked) == 2 and "macd" in asked[1][-1]["content"]
 
 
 def test_ai_prompt_hides_unseen_and_paper_results():

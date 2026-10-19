@@ -16,6 +16,7 @@ Settings (in .env):
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 
@@ -25,6 +26,8 @@ from bot.strategies.rules import CANDLE_SIZES, EXIT_PARAMS, RULES, SpecError, va
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_PER_REQUEST = 5
+
+log = logging.getLogger(__name__)
 
 
 class AIError(RuntimeError):
@@ -94,6 +97,37 @@ Reply with JSON only, exactly in this shape:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def _coerce(value):
+    """Undo harmless formatting slips models make: numbers and booleans
+    written as strings. The result still goes through validate_spec."""
+    if isinstance(value, dict):
+        return {k: _coerce(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_coerce(v) for v in value]
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lower() in ("true", "false"):
+            return text.lower() == "true"
+        if text.lower() in ("null", "none", ""):
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            return value
+        return int(number) if number.is_integer() else number
+    return value
+
+
+def _market(name, allowed: list[str]) -> str | None:
+    """Match "frxEURUSD", "EURUSD" or "EUR/USD" to an allowed market."""
+    key = re.sub(r"[^A-Z0-9]", "", str(name).upper())
+    for symbol in allowed:
+        plain = re.sub(r"[^A-Z0-9]", "", symbol.upper())
+        if key in (plain, plain.removeprefix("FRX")):
+            return symbol
+    return None
+
+
 def parse_ideas(text: str, allowed_symbols: list[str], existing: list[dict]) -> tuple[list[dict], list[str]]:
     """Return (valid ideas, reasons for each rejected one)."""
     match = re.search(r"\{.*\}", text or "", re.S)
@@ -113,18 +147,26 @@ def parse_ideas(text: str, allowed_symbols: list[str], existing: list[dict]) -> 
         if not isinstance(idea, dict):
             rejected.append(f"idea {i}: not an object")
             continue
+        label = f"idea {i} ({str(idea.get('name') or 'unnamed')[:40]})"
+        spec = idea.get("spec")
+        if spec is None and "entry" in idea:  # spec fields put on the idea itself
+            spec = {k: idea[k] for k in ("candle_seconds", "entry", "exit") if k in idea}
         try:
-            spec = validate_spec(idea.get("spec"))
+            spec = validate_spec(_coerce(spec))
         except SpecError as exc:
-            rejected.append(f"idea {i}: {exc}")
+            rejected.append(f"{label}: {exc}")
             continue
-        symbols = [s for s in (idea.get("symbols") or []) if s in allowed_symbols]
+        symbols = []
+        for name in idea.get("symbols") or []:
+            symbol = _market(name, allowed_symbols)
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
         if not symbols:
-            rejected.append(f"idea {i}: no allowed market")
+            rejected.append(f"{label}: no allowed market (use {', '.join(allowed_symbols)})")
             continue
         key = json.dumps(spec, sort_keys=True)
         if key in seen:
-            rejected.append(f"idea {i}: already tested")
+            rejected.append(f"{label}: already tested")
             continue
         seen.append(key)
         good.append({"name": str(idea.get("name") or f"AI idea {i}")[:60],
@@ -159,21 +201,43 @@ class IdeaGenerator:
         if not self.remaining_today():
             raise AIError(f"daily limit of {self.daily_cap} AI ideas reached")
         self._asked.extend([self.clock()] * count)
-        body = {"model": self.model, "temperature": 0.9,
-                "messages": build_prompt(count, symbols, entries, max_daily_loss)}
+        messages = build_prompt(count, symbols, entries, max_daily_loss)
+        client = self.client or httpx.AsyncClient(timeout=120)
+        try:
+            text = await self._ask(client, messages)
+            good, rejected = parse_ideas(text, symbols, entries)
+            if rejected and len(good) < count:
+                # One repair round: show the model exactly what failed.
+                log.info("AI ideas rejected, asking for fixes: %s", "; ".join(rejected))
+                messages += [
+                    {"role": "assistant", "content": text},
+                    {"role": "user", "content":
+                        "These ideas were rejected by the validator:\n- " + "\n- ".join(rejected) +
+                        "\nReply with JSON only, in the same shape, containing corrected "
+                        "versions of just the rejected ideas. Use only the rule types, "
+                        "parameter names and ranges listed above, and plain JSON numbers "
+                        "and true/false."},
+                ]
+                fixed, rejected = parse_ideas(await self._ask(client, messages), symbols,
+                                              entries + [{"spec": g["spec"]} for g in good])
+                good += fixed
+        finally:
+            if self.client is None:
+                await client.aclose()
+        if rejected:
+            log.info("AI ideas rejected: %s", "; ".join(rejected))
+        return good, rejected
+
+    async def _ask(self, client: httpx.AsyncClient, messages: list[dict]) -> str:
+        body = {"model": self.model, "temperature": 0.9, "messages": messages}
         headers = {"Authorization": f"Bearer {self.api_key}", "X-Title": "Trading Bot"}
-        client = self.client or httpx.AsyncClient(timeout=90)
         try:
             resp = await client.post(URL, json=body, headers=headers)
         except httpx.HTTPError as exc:
             raise AIError(f"could not reach OpenRouter ({type(exc).__name__})") from None
-        finally:
-            if self.client is None:
-                await client.aclose()
         if resp.status_code != 200:
             raise AIError(f"OpenRouter answered {resp.status_code}")
         try:
-            text = resp.json()["choices"][0]["message"]["content"]
+            return resp.json()["choices"][0]["message"]["content"] or ""
         except (ValueError, KeyError, IndexError, TypeError):
             raise AIError("unexpected reply from OpenRouter") from None
-        return parse_ideas(text, symbols, entries)

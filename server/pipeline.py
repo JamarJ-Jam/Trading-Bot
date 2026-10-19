@@ -61,6 +61,11 @@ class LabPipeline:
         self._last_paper = 0.0
 
     def start(self) -> None:
+        # A backtest cut off by a restart starts again from the top.
+        for entry in self.store.all():
+            if entry["stage"] == "backtest":
+                entry["stage"], entry["status"] = "queued", "Waiting to be tested"
+                self.store.save(entry)
         self._task = asyncio.create_task(self._loop(), name="lab-pipeline")
 
     async def stop(self) -> None:
