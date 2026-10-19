@@ -126,7 +126,8 @@ def validate_spec(spec) -> dict:
     clean_rules = []
     for i, rule in enumerate(entry, 1):
         if not isinstance(rule, dict) or rule.get("type") not in RULES:
-            raise SpecError(f"rule {i} must have a type: {', '.join(RULES)}")
+            got = f" (got {str(rule.get('type'))[:30]!r})" if isinstance(rule, dict) else ""
+            raise SpecError(f"rule {i} must have a type: {', '.join(RULES)}{got}")
         meta = RULES[rule["type"]]
         extra = set(rule) - {"type"} - set(meta["params"])
         if extra:
