@@ -329,19 +329,26 @@ function segments(entry) {
     h("div", { class: i < done ? "done" : i === failAt ? "fail" : i === now ? "now" : "" })));
 }
 
+let aiRejected = [];
+
 async function labScreen() {
   const data = await api("/lab");
   const aiBtn = h("button", { class: "small" }, "AI ideas");
   aiBtn.addEventListener("click", () => act(aiBtn, async () => {
     const r = await api("/ai/ideas", { method: "POST", body: { count: 3 } });
+    aiRejected = r.rejected;
     toast(`${r.added.length} new idea${r.added.length === 1 ? "" : "s"} queued for testing` +
       (r.rejected.length ? `, ${r.rejected.length} rejected` : ""));
   }).then(labScreen));
+  const rejectedNote = aiRejected.length ? h("div", { class: "notice bad" },
+    h("strong", {}, "Rejected AI ideas"),
+    aiRejected.map((reason) => h("span", { class: "mono small" }, reason))) : null;
   const stageColor = (e) => (e.stage === "ready" ? "gain" : e.stage === "failed" ? "loss" : "");
   render("Lab",
     header("Strategy lab", h("div", { class: "btnrow" },
       data.ai.configured ? aiBtn : null,
       h("a", { href: "#/builder", class: "btn small primary" }, "+ New"))),
+    rejectedNote,
     h("div", { class: "segs muted small" }, ["Backtest", "Unseen data", "Live prices", "Ready"].map((t) => h("span", { class: "small muted" }, t))),
     data.entries.length ? data.entries.map((e) => h("a", { href: `#/lab/${e.id}`, class: "card" },
       h("div", { class: "row" }, h("strong", {}, e.name), h("span", { class: "small " + stageColor(e) }, stageName(e.stage))),
