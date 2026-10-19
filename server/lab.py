@@ -279,10 +279,17 @@ def new_entry(name: str, source: str, symbols: list[str], *, spec: dict | None =
 
 
 class LabStore:
-    """All lab entries in one JSON file, written atomically."""
+    """All lab entries in one JSON file, written atomically.
+
+    Deleted ideas that were tested still count towards the pass bar
+    (`required_t`) and stay in a short history the AI sees, so clearing
+    failures never lowers the bar or lets the AI propose them again."""
+
+    HISTORY_LIMIT = 200
 
     def __init__(self, path: Path):
         self.path = Path(path)
+        self.meta_path = self.path.with_name(self.path.stem + "_meta.json")
         self._lock = threading.Lock()
 
     def _read(self) -> list[dict]:
@@ -296,6 +303,18 @@ class LabStore:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(entries, indent=1))
         tmp.replace(self.path)
+
+    def _meta(self) -> dict:
+        try:
+            return json.loads(self.meta_path.read_text())
+        except FileNotFoundError:
+            return {"deleted_tested": 0, "history": []}
+
+    def _write_meta(self, meta: dict) -> None:
+        self.meta_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.meta_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(meta, indent=1))
+        tmp.replace(self.meta_path)
 
     def all(self) -> list[dict]:
         with self._lock:
@@ -317,12 +336,34 @@ class LabStore:
             self._write(entries)
 
     def delete(self, entry_id: str) -> bool:
+        return bool(self.delete_where(lambda e: e["id"] == entry_id))
+
+    def delete_where(self, pick) -> int:
+        """Delete every entry `pick` returns true for; returns how many."""
         with self._lock:
             entries = self._read()
-            kept = [e for e in entries if e["id"] != entry_id]
-            self._write(kept)
-            return len(kept) != len(entries)
+            gone = [e for e in entries if pick(e)]
+            if not gone:
+                return 0
+            self._write([e for e in entries if not pick(e)])
+            tested = [e for e in gone if (e.get("results") or {}).get("backtest")]
+            if tested:
+                meta = self._meta()
+                meta["deleted_tested"] += len(tested)
+                meta["history"] = ([{k: e.get(k) for k in ("name", "symbols", "description", "spec")}
+                                    | {"results": {"backtest": e["results"]["backtest"]}}
+                                    for e in tested] + meta["history"])[:self.HISTORY_LIMIT]
+                self._write_meta(meta)
+            return len(gone)
+
+    def history(self) -> list[dict]:
+        """Deleted ideas that were tested, newest first (backtest results only)."""
+        with self._lock:
+            return self._meta()["history"]
 
     def tested_count(self) -> int:
-        """Ideas that reached a backtest; drives `required_t`."""
-        return sum(1 for e in self.all() if e.get("results", {}).get("backtest"))
+        """Ideas that reached a backtest, deleted ones included; drives `required_t`."""
+        with self._lock:
+            entries, meta = self._read(), self._meta()
+        return meta["deleted_tested"] + sum(1 for e in entries
+                                            if e.get("results", {}).get("backtest"))

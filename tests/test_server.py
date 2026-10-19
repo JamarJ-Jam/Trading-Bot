@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bot.backtest import Candle
+from server import lab
 from server.ai import IdeaGenerator, parse_ideas
 from server.api import create_app
 from server.auth import Auth, check_password, check_totp, hash_password, totp
@@ -311,3 +312,85 @@ def test_app_page_is_served(tmp_path):
     r = c.get("/")
     assert r.status_code == 200 and "<html" in r.text.lower()
     assert "Content-Security-Policy" in r.headers
+
+
+# ---- auto ideas and cleanup ------------------------------------------------------------
+
+def ai_handler(calls):
+    """Each call returns as many distinct valid ideas as were asked for."""
+    def handler(request: httpx.Request):
+        prompt = json.loads(request.content)["messages"][1]["content"]
+        count = int(prompt.split("Propose ")[1].split()[0])
+        calls.append(count)
+        ideas = [{"name": f"Idea {len(calls)}.{i}", "why": "w", "symbols": ["frxEURUSD"],
+                  "spec": {**SPEC, "entry": [{"type": "momentum", "lookback": 10 * len(calls) + i}]}}
+                 for i in range(count)]
+        content = json.dumps({"ideas": ideas})
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+    return handler
+
+
+def test_auto_ideas_fill_the_queue_to_five_then_pause(tmp_path):
+    calls = []
+    ai_client = httpx.AsyncClient(transport=httpx.MockTransport(ai_handler(calls)))
+    c = client(tmp_path, ai_client=ai_client, extra={"OPENROUTER_API_KEY": "or-key"})
+    login(c)
+    pipeline = c.app.state.app.pipeline
+    asyncio.run(pipeline.top_up(time.time()))
+    assert calls == [] and pipeline.auto_status == "Off"
+
+    r = c.put("/api/lab/settings", json={"auto_ideas": True}, headers=HEADERS)
+    assert r.json()["auto_ideas"] is True
+    asyncio.run(pipeline.top_up(time.time()))
+    assert calls == [5] and pipeline.waiting() == 5
+    asyncio.run(pipeline.top_up(time.time()))
+    assert calls == [5] and "Paused" in pipeline.auto_status
+
+    # One idea leaves the queue: only one more is asked for.
+    entry = c.get("/api/lab").json()["entries"][0]
+    c.delete(f"/api/lab/{entry['id']}", headers=HEADERS)
+    asyncio.run(pipeline.top_up(time.time()))
+    assert calls == [5, 1]
+    assert c.get("/api/lab").json()["auto_status"] == "Added 1 idea"
+
+    assert c.put("/api/lab/settings", json={"delete_failed_days": 2},
+                 headers=HEADERS).status_code == 400
+
+
+def test_failed_ideas_are_deleted_but_still_count(tmp_path):
+    c = client(tmp_path)
+    login(c)
+    app_state = c.app.state.app
+    store, pipeline = app_state.lab, app_state.pipeline
+    now = time.time()
+    entries = []
+    for i, (stage, age_days) in enumerate([("failed", 5), ("failed", 1), ("paper", 9)]):
+        e = lab.new_entry(f"E{i}", "ai", ["frxEURUSD"],
+                          spec={**SPEC, "entry": [{"type": "momentum", "lookback": i + 1}]})
+        e["stage"], e["updated_at"] = stage, now - age_days * 86400
+        e["results"] = {"backtest": {"trades": 40, "net": -1.0, "win_rate": 0.4, "t_stat": -0.5}}
+        entries.append(store.add(e))
+    assert store.tested_count() == 3
+
+    assert pipeline.delete_old_failures(now) == 1  # default: failed for 3+ days
+    assert [e["name"] for e in store.all()] == ["E2", "E1"]
+    assert store.tested_count() == 3 and store.history()[0]["name"] == "E0"
+
+    r = c.post("/api/lab/delete-failed", headers=HEADERS)
+    assert r.json() == {"deleted": 1}
+    assert [e["name"] for e in store.all()] == ["E2"] and store.tested_count() == 3
+
+    # The AI still sees (and cannot re-propose) deleted ideas.
+    good, rejected = parse_ideas(json.dumps({"ideas": [
+        {"name": "Again", "symbols": ["frxEURUSD"], "spec": entries[0]["spec"]}]}),
+        ["frxEURUSD"], store.all() + store.history())
+    assert good == [] and "already tested" in rejected[0]
+
+
+def test_ai_daily_cap_survives_a_restart(tmp_path):
+    path = tmp_path / "ai_usage.json"
+    calls = []
+    gen = IdeaGenerator("key", daily_cap=3, usage_path=path,
+                        client=httpx.AsyncClient(transport=httpx.MockTransport(ai_handler(calls))))
+    asyncio.run(gen.ideas(2, ["frxEURUSD"], [], 10))
+    assert IdeaGenerator("key", daily_cap=3, usage_path=path).remaining_today() == 1

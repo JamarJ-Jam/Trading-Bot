@@ -24,7 +24,7 @@ to Deriv all day, and Workers only run for a moment per request.
 |---|---|
 | Home | Balance, running state, today's result, daily loss limit, open trades, recent trades. **Start / Pause** and **Stop all trading** (the kill switch: closes every open trade and stops). |
 | Strategy | Pick the strategy and market, set stake, multiplier, exits and the safety limits. The same checks as `.env` apply, so the app can't set anything the bot would refuse. Switch between demo and real. |
-| Lab | Every strategy idea and where it is in testing. **+ New** opens the builder; **AI ideas** asks OpenRouter for new ones. |
+| Lab | Every strategy idea and where it is in testing. **+ New** opens the builder; **AI ideas** asks OpenRouter for new ones. **Keep the AI coming up with ideas** keeps up to 5 ideas waiting to be tested and pauses when 5 are waiting or the day's AI limit is used. Failed ideas are deleted after the days you pick (or with **Delete** / **Delete all failed**); deleted ideas still count towards the pass bar. |
 | Lab › strategy | The four readiness checks, the results behind them, **Use this strategy**. |
 | Trades | Every trade decision from `logs/trades.csv`, with CSV export. |
 | Switch to real | Shows the current strategy's readiness. Needs the box ticked and REAL typed. |
