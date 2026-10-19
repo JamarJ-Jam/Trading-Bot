@@ -190,6 +190,24 @@ def test_builder_entry_runs_through_the_pipeline(tmp_path):
     assert c.delete(f"/api/lab/{entry_id}", headers=HEADERS).status_code == 400
 
 
+def test_backtest_cut_off_by_a_restart_runs_again(tmp_path):
+    from server import lab
+    from server.pipeline import LabPipeline
+
+    store = lab.LabStore(tmp_path / "lab.json")
+    entry = store.add(lab.new_entry("Cut off", "ai", ["frxEURUSD"], spec=SPEC))
+    entry["stage"], entry["status"] = "backtest", "Downloading prices and backtesting"
+    store.save(entry)
+
+    async def boot():
+        pipeline = LabPipeline(store, None, None)
+        pipeline.start()
+        await pipeline.stop()
+
+    asyncio.run(boot())
+    assert store.get(entry["id"])["stage"] == "queued"
+
+
 def test_bad_builder_spec_is_rejected(tmp_path):
     c = client(tmp_path)
     login(c)
