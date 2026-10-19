@@ -333,30 +333,74 @@ let aiRejected = [];
 
 async function labScreen() {
   const data = await api("/lab");
+  const opts = data.options;
+  const refresh = () => labScreen().catch(() => {});
   const aiBtn = h("button", { class: "small" }, "AI ideas");
   aiBtn.addEventListener("click", () => act(aiBtn, async () => {
     const r = await api("/ai/ideas", { method: "POST", body: { count: 3 } });
     aiRejected = r.rejected;
     toast(`${r.added.length} new idea${r.added.length === 1 ? "" : "s"} queued for testing` +
       (r.rejected.length ? `, ${r.rejected.length} rejected` : ""));
-  }).then(labScreen));
+  }).then(refresh));
   const rejectedNote = aiRejected.length ? h("div", { class: "notice bad" },
     h("strong", {}, "Rejected AI ideas"),
     aiRejected.map((reason) => h("span", { class: "mono small" }, reason))) : null;
+
+  const saveOptions = (changes, el) => act(el, () => api("/lab/settings", { method: "PUT", body: changes })).then(refresh);
+  const auto = h("input", { type: "checkbox", id: "auto-ideas", checked: opts.auto_ideas });
+  auto.addEventListener("change", () => saveOptions({ auto_ideas: auto.checked }, auto));
+  const keep = h("select", { id: "delete-failed", "aria-label": "Delete failed ideas after" },
+    [[0, "Never"], [1, "1 day"], [3, "3 days"], [7, "7 days"], [30, "30 days"]].map(([v, label]) =>
+      h("option", { value: String(v), selected: opts.delete_failed_days === v }, label)));
+  keep.addEventListener("change", () => saveOptions({ delete_failed_days: Number(keep.value) }, keep));
+  const optionsCard = h("div", { class: "card" },
+    data.ai.configured ? h("div", { class: "field" },
+      h("label", { for: "auto-ideas" }, "Keep the AI coming up with ideas"), auto) : null,
+    data.ai.configured && opts.auto_ideas ? h("span", { class: "sub mono small muted" },
+      `${data.auto_status} · ${data.ai.remaining} AI ideas left today`) : null,
+    h("div", { class: "field" }, h("label", { for: "delete-failed" }, "Delete failed ideas after"), keep));
+
+  const failed = data.entries.filter((e) => e.stage === "failed");
+  const clearBtn = h("button", { class: "small danger" }, `Delete all failed (${failed.length})`);
+  clearBtn.addEventListener("click", () => {
+    if (!confirm(`Delete all ${failed.length} failed strategies?`)) return;
+    act(clearBtn, () => api("/lab/delete-failed", { method: "POST" })).then(refresh);
+  });
+
   const stageColor = (e) => (e.stage === "ready" ? "gain" : e.stage === "failed" ? "loss" : "");
+  const card = (e) => {
+    const del = h("button", { class: "small", "aria-label": `Delete ${e.name}` }, "Delete");
+    del.addEventListener("click", () => {
+      if (e.stage !== "failed" && !confirm(`Delete ${e.name}? It has not failed.`)) return;
+      act(del, () => api("/lab/" + e.id, { method: "DELETE" })).then(refresh);
+    });
+    return h("div", { class: "card" },
+      h("a", { href: `#/lab/${e.id}`, class: "cardlink" },
+        h("div", { class: "row" }, h("strong", {}, e.name), h("span", { class: "small " + stageColor(e) }, stageName(e.stage))),
+        segments(e),
+        h("span", { class: "sub mono small muted" }, e.status)),
+      h("div", { class: "row" },
+        h("span", { class: "small muted" }, (e.source === "ai" ? "AI idea · " : "") + e.symbols.join(", ")),
+        del));
+  };
+
   render("Lab",
     header("Strategy lab", h("div", { class: "btnrow" },
       data.ai.configured ? aiBtn : null,
       h("a", { href: "#/builder", class: "btn small primary" }, "+ New"))),
+    optionsCard,
     rejectedNote,
+    failed.length ? h("div", { class: "row" }, h("span", { class: "small muted" }, `${data.entries.length} strategies`), clearBtn) : null,
     h("div", { class: "segs muted small" }, ["Backtest", "Unseen data", "Live prices", "Ready"].map((t) => h("span", { class: "small muted" }, t))),
-    data.entries.length ? data.entries.map((e) => h("a", { href: `#/lab/${e.id}`, class: "card" },
-      h("div", { class: "row" }, h("strong", {}, e.name), h("span", { class: "small " + stageColor(e) }, stageName(e.stage))),
-      segments(e),
-      h("span", { class: "sub mono small muted" }, e.status),
-      h("span", { class: "small muted" }, (e.source === "ai" ? "AI idea · " : "") + e.symbols.join(", ")))) :
+    data.entries.length ? data.entries.map(card) :
       h("div", { class: "card empty" }, "No strategies yet. Tap + New to build one", data.ai.configured ? ", or ask the AI for ideas." : "."),
     h("div", { class: "muted small" }, `A backtest now needs a score of ${data.required_t} to pass. The bar rises as more ideas are tried, so lucky winners don't slip through.`));
+  clearInterval(poll);
+  poll = setInterval(() => {
+    if (location.hash !== "#/lab" || document.activeElement?.tagName === "SELECT") return;
+    const y = window.scrollY;
+    labScreen().then(() => window.scrollTo(0, y)).catch(() => {});
+  }, 15000);
 }
 
 function statBlock(title, s) {

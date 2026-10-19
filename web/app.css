@@ -145,5 +145,6 @@ nav.tabs svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stro
 .spark { width: 100%; height: 120px; }
 .spark path { fill: none; stroke-width: 2; }
 .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 14px; }
-a.card { color: inherit; text-decoration: none; }
+a.card, a.cardlink { color: inherit; text-decoration: none; }
+a.cardlink { display: flex; flex-direction: column; gap: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }

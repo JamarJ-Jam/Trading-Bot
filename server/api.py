@@ -25,7 +25,7 @@ from bot.strategies.rules import CANDLE_SIZES, EXIT_PARAMS, RULES, SpecError
 from . import lab
 from .ai import AIError, IdeaGenerator
 from .auth import Auth
-from .pipeline import Alerts, LabPipeline
+from .pipeline import QUEUE_SIZE, Alerts, LabOptions, LabPipeline
 from .runner import BotManager
 from .settings import LAB_PREFIX, Settings
 
@@ -47,15 +47,18 @@ class App:
         self.alerts = Alerts(state / "alerts.json")
         kwargs = {"bot_factory": bot_factory} if bot_factory else {}
         self.bot = BotManager(self.settings, state, **kwargs)
-        self.pipeline = LabPipeline(self.lab, self.settings, self.alerts,
-                                    **({"fetch": fetch} if fetch else {}))
         self.auth = Auth(env.get("APP_PASSWORD_HASH", ""), env.get("APP_TOTP_SECRET", ""),
                          env.get("APP_SECRET_KEY", ""))
         self.ai = IdeaGenerator(env.get("OPENROUTER_API_KEY", ""),
                                 env.get("OPENROUTER_MODEL", "openrouter/auto"),
-                                int(env.get("AI_MAX_IDEAS_PER_DAY") or 20), client=ai_client)
+                                int(env.get("AI_MAX_IDEAS_PER_DAY") or 20), client=ai_client,
+                                usage_path=state / "ai_usage.json")
         self.lab_symbols = [s.strip() for s in (env.get("LAB_SYMBOLS") or DEFAULT_LAB_SYMBOLS)
                             .split(",") if s.strip()]
+        self.lab_options = LabOptions(state / "lab_options.json")
+        self.pipeline = LabPipeline(self.lab, self.settings, self.alerts,
+                                    **({"fetch": fetch} if fetch else {}), ai=self.ai,
+                                    symbols=self.lab_symbols, options=self.lab_options)
         self.secure_cookie = (env.get("APP_SECURE_COOKIE", "true").lower() != "false")
 
     def config(self) -> Config:
@@ -206,7 +209,27 @@ def create_app(env: dict | None = None, *, background: bool = True, **kwargs) ->
         return {"entries": state.lab.all(), "testing": state.pipeline.current,
                 "required_t": round(lab.required_t(state.lab.tested_count() + 1), 2),
                 "symbols": state.lab_symbols,
-                "ai": {"configured": state.ai.configured, "remaining": state.ai.remaining_today()}}
+                "ai": {"configured": state.ai.configured, "remaining": state.ai.remaining_today()},
+                "options": state.lab_options.get(), "auto_status": state.pipeline.auto_status,
+                "queue_size": QUEUE_SIZE}
+
+    @app.put("/api/lab/settings", dependencies=[Depends(user)])
+    async def lab_settings_update(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "send an object")
+        try:
+            options = state.lab_options.update(body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        state.pipeline.poke()
+        return options
+
+    @app.post("/api/lab/delete-failed", dependencies=[Depends(user)])
+    def lab_delete_failed():
+        keep = state.pipeline._in_use()
+        gone = state.lab.delete_where(lambda e: e["stage"] == "failed" and e["id"] != keep)
+        return {"deleted": gone}
 
     @app.get("/api/lab/options", dependencies=[Depends(user)])
     def lab_options():
@@ -266,18 +289,11 @@ def create_app(env: dict | None = None, *, background: bool = True, **kwargs) ->
     @app.post("/api/ai/ideas", dependencies=[Depends(user)])
     async def ai_ideas(request: Request):
         body = await request.json()
-        cfg = state.config()
+        state.config()
         try:
-            ideas, rejected = await state.ai.ideas(int(body.get("count") or 3), state.lab_symbols,
-                                                   state.lab.all(), cfg.max_daily_loss)
+            added, rejected = await state.pipeline.add_ai_ideas(int(body.get("count") or 3))
         except AIError as exc:
             raise HTTPException(502, str(exc)) from None
-        added = []
-        for idea in ideas:
-            entry = lab.new_entry(idea["name"], "ai", idea["symbols"], spec=idea["spec"],
-                                  note=idea["why"])
-            added.append(state.lab.add(entry))
-        state.pipeline.poke()
         return {"added": added, "rejected": rejected}
 
     @app.get("/api/alerts", dependencies=[Depends(user)])

@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 
 import httpx
 
@@ -176,13 +177,21 @@ def parse_ideas(text: str, allowed_symbols: list[str], existing: list[dict]) -> 
 
 class IdeaGenerator:
     def __init__(self, api_key: str, model: str = "openrouter/auto", daily_cap: int = 20,
-                 client: httpx.AsyncClient | None = None, clock=time.time):
+                 client: httpx.AsyncClient | None = None, clock=time.time,
+                 usage_path: Path | None = None):
         self.api_key = api_key
         self.model = model or "openrouter/auto"
         self.daily_cap = daily_cap
         self.client = client
         self.clock = clock
+        # Saved so a server restart does not reset the daily cap.
+        self.usage_path = Path(usage_path) if usage_path else None
         self._asked: list[float] = []
+        if self.usage_path:
+            try:
+                self._asked = [float(t) for t in json.loads(self.usage_path.read_text())]
+            except (FileNotFoundError, ValueError, TypeError):
+                pass
 
     @property
     def configured(self) -> bool:
@@ -201,6 +210,9 @@ class IdeaGenerator:
         if not self.remaining_today():
             raise AIError(f"daily limit of {self.daily_cap} AI ideas reached")
         self._asked.extend([self.clock()] * count)
+        if self.usage_path:
+            self.usage_path.parent.mkdir(parents=True, exist_ok=True)
+            self.usage_path.write_text(json.dumps(self._asked))
         messages = build_prompt(count, symbols, entries, max_daily_loss)
         client = self.client or httpx.AsyncClient(timeout=120)
         try:
