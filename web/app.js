@@ -353,11 +353,15 @@ async function labScreen() {
     [[0, "Never"], [1, "1 day"], [3, "3 days"], [7, "7 days"], [30, "30 days"]].map(([v, label]) =>
       h("option", { value: String(v), selected: opts.delete_failed_days === v }, label)));
   keep.addEventListener("change", () => saveOptions({ delete_failed_days: Number(keep.value) }, keep));
+  const perDay = h("input", { type: "number", id: "ai-per-day", min: "1", max: "500", step: "1",
+    inputmode: "numeric", value: String(opts.ai_ideas_per_day) });
+  perDay.addEventListener("change", () => saveOptions({ ai_ideas_per_day: Math.round(Number(perDay.value)) }, perDay));
   const optionsCard = h("div", { class: "card" },
     data.ai.configured ? h("div", { class: "field" },
       h("label", { for: "auto-ideas" }, "Keep the AI coming up with ideas"), auto) : null,
     data.ai.configured && opts.auto_ideas ? h("span", { class: "sub mono small muted" },
       `${data.auto_status} · ${data.ai.remaining} AI ideas left today`) : null,
+    data.ai.configured ? h("div", { class: "field" }, h("label", { for: "ai-per-day" }, "AI ideas per day"), perDay) : null,
     h("div", { class: "field" }, h("label", { for: "delete-failed" }, "Delete failed ideas after"), keep));
 
   const failed = data.entries.filter((e) => e.stage === "failed");
@@ -397,7 +401,7 @@ async function labScreen() {
     h("div", { class: "muted small" }, `A backtest now needs a score of ${data.required_t} to pass. The bar rises as more ideas are tried, so lucky winners don't slip through.`));
   clearInterval(poll);
   poll = setInterval(() => {
-    if (location.hash !== "#/lab" || document.activeElement?.tagName === "SELECT") return;
+    if (location.hash !== "#/lab" || ["SELECT", "INPUT"].includes(document.activeElement?.tagName)) return;
     const y = window.scrollY;
     labScreen().then(() => window.scrollTo(0, y)).catch(() => {});
   }, 15000);
