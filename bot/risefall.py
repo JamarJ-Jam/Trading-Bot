@@ -7,7 +7,9 @@ refuses to run on anything but a demo account, checked twice: the config is
 forced to demo and the account Deriv hands back must say demo.
 
 Rules (see bot/martingale.py for the offline replay of the same rules):
-  * Buy a Rise (CALL) or Fall (PUT) contract for `duration_minutes`.
+  * Buy a Rise (CALL) or Fall (PUT) contract lasting `duration` ticks,
+    seconds, minutes, hours or days, or ending at `end_time` (UTC, the next
+    time the clock shows it), like the options on Deriv's trade screen.
   * After a loss the stake is multiplied; after a win it goes back to the
     start stake; a stake above `max_stake` goes back to the start stake.
   * A session ends at `profit` or `-loss`; the next one starts straight away
@@ -35,6 +37,10 @@ log = logging.getLogger(__name__)
 
 FATAL_CODES = {"401", "403", "InvalidToken", "AuthorizationRequired", "PermissionDenied"}
 SESSION_FIELDS = ["start_utc", "end_utc", "trades", "result", "ended", "biggest_stake"]
+# Deriv's Rise/Fall duration units: API letter and allowed range.
+DURATION_UNITS = {"ticks": ("t", 1, 10), "seconds": ("s", 15, 86400), "minutes": ("m", 1, 1440),
+                  "hours": ("h", 1, 24), "days": ("d", 1, 365)}
+END_TIME = "end_time"
 
 
 class MartingaleError(ValueError):
@@ -45,7 +51,9 @@ class MartingaleError(ValueError):
 class MartingaleSettings:
     symbol: str = "1HZ100V"
     direction: str = "rise"          # rise or fall
-    duration_minutes: int = 1
+    duration: int = 1
+    duration_unit: str = "minutes"   # ticks, seconds, minutes, hours, days or end_time
+    end_time: str = "23:59"          # HH:MM UTC, used when duration_unit is end_time
     stake: float = 1.0
     multiplier: float = 2.0
     max_stake: float = 64.0
@@ -56,6 +64,11 @@ class MartingaleSettings:
 
     @classmethod
     def from_dict(cls, data: dict) -> MartingaleSettings:
+        data = dict(data)
+        if "duration_minutes" in data:  # settings saved before other units existed
+            data.setdefault("duration", data["duration_minutes"])
+            data.setdefault("duration_unit", "minutes")
+            del data["duration_minutes"]
         unknown = set(data) - set(cls.__dataclass_fields__)
         if unknown:
             raise MartingaleError(f"unknown settings: {', '.join(sorted(unknown))}")
@@ -64,7 +77,9 @@ class MartingaleSettings:
             s = cls(
                 symbol=str(merged["symbol"]).strip(),
                 direction=str(merged["direction"]).lower(),
-                duration_minutes=_whole(merged["duration_minutes"], "duration_minutes"),
+                duration=_whole(merged["duration"], "duration"),
+                duration_unit=str(merged["duration_unit"]).lower(),
+                end_time=str(merged["end_time"]).strip(),
                 stake=float(merged["stake"]), multiplier=float(merged["multiplier"]),
                 max_stake=float(merged["max_stake"]), profit=float(merged["profit"]),
                 loss=float(merged["loss"]), daily_loss_limit=float(merged["daily_loss_limit"]),
@@ -82,8 +97,15 @@ class MartingaleSettings:
             raise MartingaleError("symbol is not a market symbol")
         if self.direction not in ("rise", "fall"):
             raise MartingaleError("direction must be rise or fall")
-        if not 1 <= self.duration_minutes <= 60:
-            raise MartingaleError("duration must be 1 to 60 minutes")
+        if self.duration_unit == END_TIME:
+            _clock(self.end_time)
+        elif self.duration_unit in DURATION_UNITS:
+            _, low, high = DURATION_UNITS[self.duration_unit]
+            if not low <= self.duration <= high:
+                raise MartingaleError(f"duration must be {low} to {high} {self.duration_unit}")
+        else:
+            raise MartingaleError("duration unit must be ticks, seconds, minutes, hours, days "
+                                  "or end time")
         if not 0.35 <= self.stake <= 1000:
             raise MartingaleError("stake must be 0.35 to 1000")
         if not 1 <= self.multiplier <= 10:
@@ -102,6 +124,36 @@ def _whole(value, name: str) -> int:
     if isinstance(value, bool) or float(value) != int(float(value)):
         raise MartingaleError(f"{name} must be a whole number")
     return int(float(value))
+
+
+def _clock(text: str) -> tuple[int, int]:
+    try:
+        hours, minutes = (int(part) for part in text.split(":"))
+    except ValueError:
+        raise MartingaleError("end time must look like 14:30 (UTC)") from None
+    if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+        raise MartingaleError("end time must look like 14:30 (UTC)")
+    return hours, minutes
+
+
+def expiry_epoch(end_time: str, now: float, min_seconds: int = 60) -> int:
+    """The next moment the UTC clock shows `end_time`, at least `min_seconds` away."""
+    hours, minutes = _clock(end_time)
+    day = int(now) - int(now) % 86400
+    expiry = day + hours * 3600 + minutes * 60
+    while expiry < now + min_seconds:
+        expiry += 86400
+    return expiry
+
+
+def contract_length(s: MartingaleSettings, now: float) -> tuple[dict, float]:
+    """Proposal fields for the contract length, and roughly how many seconds it runs."""
+    if s.duration_unit == END_TIME:
+        expiry = expiry_epoch(s.end_time, now)
+        return {"date_expiry": expiry}, expiry - now
+    letter = DURATION_UNITS[s.duration_unit][0]
+    seconds = {"t": 2, "s": 1, "m": 60, "h": 3600, "d": 86400}[letter] * s.duration
+    return {"duration": s.duration, "duration_unit": letter}, seconds
 
 
 def next_stake(s: MartingaleSettings, stake: float, won: bool) -> float:
@@ -254,8 +306,8 @@ class MartingaleRunner:
         kind = "CALL" if s.direction == "rise" else "PUT"
         quote = (await self.client.request({
             "proposal": 1, "amount": stake, "basis": "stake", "contract_type": kind,
-            "currency": self.currency, "duration": s.duration_minutes, "duration_unit": "m",
-            "underlying_symbol": s.symbol,
+            "currency": self.currency, "underlying_symbol": s.symbol,
+            **contract_length(s, time.time())[0],
         })).get("proposal") or {}
         ask = float(quote.get("ask_price") or 0)
         if not quote.get("id") or ask <= 0 or ask > s.max_stake + 0.01:
@@ -281,7 +333,8 @@ class MartingaleRunner:
             first = await self.client.request({"proposal_open_contract": 1,
                                                "contract_id": _api_id(cid), "subscribe": 1})
             await self._on_message(first)
-            limit = self.settings.duration_minutes * 60 + 120
+            # No update by then: ask again (and keep asking every 10 minutes).
+            limit = min(contract_length(self.settings, time.time())[1], 600) + 120
             while True:
                 try:
                     poc = await asyncio.wait_for(asyncio.shield(fut), limit)
