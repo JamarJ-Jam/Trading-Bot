@@ -28,6 +28,7 @@ QUEUE_SIZE = 5               # auto ideas pause while this many wait to be teste
 AI_RETRY_SECONDS = 30 * 60   # after an AI error, wait this long before asking again
 DELETE_FAILED_CHOICES = (0, 1, 3, 7, 30)  # days; 0 keeps failed ideas
 LAB_OPTION_DEFAULTS = {"auto_ideas": False, "delete_failed_days": 3}
+MAX_AI_IDEAS_PER_DAY = 500
 HISTORY_CANDLES = {60: 20000, 300: 20000, 900: 20000, 1800: 15000, 3600: 15000,
                    14400: 5000, 86400: 1500}
 
@@ -60,15 +61,16 @@ class Alerts:
 class LabOptions:
     """The lab's own switches, changed from the Lab screen."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, ai_ideas_per_day: int = 20):
         self.path = Path(path)
+        self.defaults = {**LAB_OPTION_DEFAULTS, "ai_ideas_per_day": ai_ideas_per_day}
 
     def get(self) -> dict:
         try:
             saved = json.loads(self.path.read_text())
         except (FileNotFoundError, ValueError):
             saved = {}
-        return {**LAB_OPTION_DEFAULTS, **{k: v for k, v in saved.items() if k in LAB_OPTION_DEFAULTS}}
+        return {**self.defaults, **{k: v for k, v in saved.items() if k in self.defaults}}
 
     def update(self, changes: dict) -> dict:
         data = self.get()
@@ -81,6 +83,12 @@ class LabOptions:
                 raise ValueError("delete_failed_days must be one of "
                                  + ", ".join(map(str, DELETE_FAILED_CHOICES)))
             data["delete_failed_days"] = changes["delete_failed_days"]
+        if "ai_ideas_per_day" in changes:
+            value = changes["ai_ideas_per_day"]
+            if isinstance(value, bool) or not isinstance(value, int) \
+                    or not 1 <= value <= MAX_AI_IDEAS_PER_DAY:
+                raise ValueError(f"AI ideas per day must be 1 to {MAX_AI_IDEAS_PER_DAY}")
+            data["ai_ideas_per_day"] = value
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data))
         return data

@@ -55,7 +55,8 @@ class App:
                                 usage_path=state / "ai_usage.json")
         self.lab_symbols = [s.strip() for s in (env.get("LAB_SYMBOLS") or DEFAULT_LAB_SYMBOLS)
                             .split(",") if s.strip()]
-        self.lab_options = LabOptions(state / "lab_options.json")
+        self.lab_options = LabOptions(state / "lab_options.json", self.ai.daily_cap)
+        self.ai.daily_cap = self.lab_options.get()["ai_ideas_per_day"]
         self.pipeline = LabPipeline(self.lab, self.settings, self.alerts,
                                     **({"fetch": fetch} if fetch else {}), ai=self.ai,
                                     symbols=self.lab_symbols, options=self.lab_options)
@@ -222,6 +223,7 @@ def create_app(env: dict | None = None, *, background: bool = True, **kwargs) ->
             options = state.lab_options.update(body)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
+        state.ai.daily_cap = options["ai_ideas_per_day"]
         state.pipeline.poke()
         return options
 
