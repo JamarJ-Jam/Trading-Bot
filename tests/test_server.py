@@ -394,3 +394,17 @@ def test_ai_daily_cap_survives_a_restart(tmp_path):
                         client=httpx.AsyncClient(transport=httpx.MockTransport(ai_handler(calls))))
     asyncio.run(gen.ideas(2, ["frxEURUSD"], [], 10))
     assert IdeaGenerator("key", daily_cap=3, usage_path=path).remaining_today() == 1
+
+
+def test_ai_ideas_per_day_is_a_lab_setting(tmp_path):
+    c = client(tmp_path, extra={"OPENROUTER_API_KEY": "or-key", "AI_MAX_IDEAS_PER_DAY": "20"})
+    login(c)
+    assert c.get("/api/lab").json()["options"]["ai_ideas_per_day"] == 20
+    r = c.put("/api/lab/settings", json={"ai_ideas_per_day": 100}, headers=HEADERS)
+    assert r.status_code == 200 and r.json()["ai_ideas_per_day"] == 100
+    assert c.get("/api/lab").json()["ai"]["remaining"] == 100
+    for bad in (0, 501, "50", True):
+        assert c.put("/api/lab/settings", json={"ai_ideas_per_day": bad},
+                     headers=HEADERS).status_code == 400
+    # A restart keeps the saved value.
+    assert client(tmp_path, extra={"OPENROUTER_API_KEY": "or-key"}).app.state.app.ai.daily_cap == 100

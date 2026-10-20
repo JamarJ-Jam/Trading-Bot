@@ -54,8 +54,9 @@ The AI (any OpenRouter model) only proposes strategies in the builder's rule
 format. The server rejects anything that isn't a valid rule, and each idea goes
 through the same four steps. The AI is shown backtest numbers only, never the
 unseen-data or live-price results, so it can't tune ideas to the held-back
-prices. It never trades or changes settings. `AI_MAX_IDEAS_PER_DAY` caps
-requests; give the OpenRouter key its own credit limit too.
+prices. It never trades or changes settings. **AI ideas per day** on the Lab
+screen caps requests (it starts at `AI_MAX_IDEAS_PER_DAY`); give the
+OpenRouter key its own credit limit too.
 
 ## 1. Pick the machine
 

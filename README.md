@@ -68,6 +68,7 @@ throttled to 2 per second, far under Deriv's published limits.
 bot/
   __main__.py      entry point (python -m bot, --check)
   backtest.py      python -m bot.backtest: replay past prices
+  martingale.py    python -m bot.martingale: replay Deriv's Automate martingale (study only)
   config.py        settings from .env, with validation
   deriv_client.py  REST + WebSocket client, req_id matching, throttle
   risk.py          hard limits and persisted daily state
@@ -143,6 +144,22 @@ drawdown. Every simulated trade goes to `logs/backtest_<strategy>_<symbol>.csv`.
 P/L is modelled as stake x multiplier x price move, capped at losing the stake,
 and is **before Deriv's commission and spread** (`--commission` adds a cost).
 When a candle touches both a loss exit and a profit exit, the loss is assumed.
+
+### Deriv's "Automate" martingale
+
+`python -m bot.martingale` replays the martingale from Deriv's Automate
+Rise/Fall screen on Volatility 100 (1s) prices and reports how often sessions
+end in profit, the average session, the worst session and the best and worst
+day. It never places a trade, and the live bot has no martingale: this is
+only for seeing what the setting does.
+
+```
+python -m bot.martingale --stake 100 --multiplier 2 --profit 10 --loss 10
+python -m bot.martingale --stake 1 --multiplier 2 --max-stake 64 --profit 10 --loss 100
+python -m bot.martingale --sim 30000        # coin flips instead of downloaded prices
+```
+
+Every session goes to `logs/martingale_sessions.csv`.
 
 ## Adding a strategy
 
