@@ -326,8 +326,20 @@ async function martingaleScreen() {
   const inputs = {
     stake: num(s.stake), multiplier: num(s.multiplier, "0.1"), max_stake: num(s.max_stake),
     profit: num(s.profit), loss: num(s.loss), daily_loss_limit: num(s.daily_loss_limit),
-    duration_minutes: num(s.duration_minutes, "1"), sessions: num(s.sessions, "1"),
+    duration: num(s.duration, "1"), sessions: num(s.sessions, "1"),
   };
+  const unit = h("select", { disabled: m.running },
+    [["ticks", "Ticks"], ["seconds", "Seconds"], ["minutes", "Minutes"], ["hours", "Hours"], ["days", "Days"],
+      ["end_time", "End time"]].map(([v, label]) => h("option", { value: v, selected: s.duration_unit === v }, label)));
+  const endTime = h("input", { type: "time", value: s.end_time, disabled: m.running });
+  const durationField = field("Duration", inputs.duration);
+  const endTimeField = field("Ends at (UTC)", endTime);
+  const showLength = () => {
+    durationField.style.display = unit.value === "end_time" ? "none" : "";
+    endTimeField.style.display = unit.value === "end_time" ? "" : "none";
+  };
+  unit.addEventListener("change", showLength);
+  showLength();
   const symbol = h("input", { value: s.symbol, disabled: m.running });
   const direction = h("select", { disabled: m.running },
     h("option", { value: "rise", selected: s.direction === "rise" }, "Rise"),
@@ -335,14 +347,15 @@ async function martingaleScreen() {
   const refresh = () => martingaleScreen().catch(() => {});
   // Unsaved edits pause the auto-refresh, which would otherwise put the saved values back.
   martingaleEdited = false;
-  for (const el of [...Object.values(inputs), symbol, direction]) {
+  for (const el of [...Object.values(inputs), symbol, direction, unit, endTime]) {
     el.addEventListener("input", () => { martingaleEdited = true; });
   }
 
   const save = h("button", {}, "Save settings");
   save.disabled = m.running;
   const saveSettings = () => {
-    const body = { symbol: symbol.value.trim(), direction: direction.value };
+    const body = { symbol: symbol.value.trim(), direction: direction.value,
+      duration_unit: unit.value, end_time: endTime.value };
     for (const [k, el] of Object.entries(inputs)) body[k] = Number(el.value);
     return api("/martingale/settings", { method: "PUT", body });
   };
@@ -387,7 +400,8 @@ async function martingaleScreen() {
       h("div", { class: "row" }, h("span", { class: "small muted" }, "Every trade is also on the Trades tab."), reset)),
     h("span", { class: "label" }, "Settings"),
     h("div", { class: "card" },
-      field("Market", symbol), field("Direction", direction), field("Contract minutes", inputs.duration_minutes),
+      field("Market", symbol), field("Direction", direction),
+      field("Contract length", unit), durationField, endTimeField,
       field("Start stake ($)", inputs.stake), field("Multiply after a loss", inputs.multiplier), field("Max stake ($)", inputs.max_stake),
       field("Session profit target ($)", inputs.profit), field("Session loss limit ($)", inputs.loss),
       field("Daily loss limit ($)", inputs.daily_loss_limit), field("Sessions (0 = keep going)", inputs.sessions)),
