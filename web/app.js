@@ -317,6 +317,8 @@ async function strategyScreen() {
       h("span", { class: "small muted" }, "Run Deriv's Rise/Fall martingale on your demo account and see how sessions and days end.")));
 }
 
+let martingaleEdited = false;
+
 async function martingaleScreen() {
   const m = await api("/martingale");
   const s = m.settings, t = m.totals;
@@ -331,17 +333,27 @@ async function martingaleScreen() {
     h("option", { value: "rise", selected: s.direction === "rise" }, "Rise"),
     h("option", { value: "fall", selected: s.direction === "fall" }, "Fall"));
   const refresh = () => martingaleScreen().catch(() => {});
+  // Unsaved edits pause the auto-refresh, which would otherwise put the saved values back.
+  martingaleEdited = false;
+  for (const el of [...Object.values(inputs), symbol, direction]) {
+    el.addEventListener("input", () => { martingaleEdited = true; });
+  }
 
   const save = h("button", {}, "Save settings");
   save.disabled = m.running;
-  save.addEventListener("click", () => act(save, () => {
+  const saveSettings = () => {
     const body = { symbol: symbol.value.trim(), direction: direction.value };
     for (const [k, el] of Object.entries(inputs)) body[k] = Number(el.value);
     return api("/martingale/settings", { method: "PUT", body });
-  }, "Saved").then(refresh));
+  };
+  // On an error the edits stay on screen so they can be fixed.
+  save.addEventListener("click", () => act(save, saveSettings, "Saved").then((ok) => ok && refresh()));
   const go = h("button", { class: m.running ? "danger" : "primary" }, m.running ? "Stop test" : "Start test");
-  go.addEventListener("click", () => act(go, () => api(m.running ? "/martingale/stop" : "/martingale/start", { method: "POST" }),
-    m.running ? "Stopped" : "Started on your demo account").then(refresh));
+  go.addEventListener("click", () => act(go, async () => {
+    if (m.running) return api("/martingale/stop", { method: "POST" });
+    if (martingaleEdited) await saveSettings();  // start with what's on screen
+    return api("/martingale/start", { method: "POST" });
+  }, m.running ? "Stopped" : "Started on your demo account").then((ok) => ok && refresh()));
   const reset = h("button", { class: "small" }, "Clear results");
   reset.disabled = m.running;
   reset.addEventListener("click", () => {
@@ -382,7 +394,8 @@ async function martingaleScreen() {
     save);
   clearInterval(poll);
   poll = setInterval(() => {
-    if (location.hash !== "#/martingale" || ["SELECT", "INPUT"].includes(document.activeElement?.tagName)) return;
+    if (location.hash !== "#/martingale" || martingaleEdited ||
+      ["SELECT", "INPUT"].includes(document.activeElement?.tagName)) return;
     const y = window.scrollY;
     martingaleScreen().then(() => window.scrollTo(0, y)).catch(() => {});
   }, 5000);
