@@ -20,11 +20,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from bot.config import Config, ConfigError
+from bot.risefall import MartingaleError
 from bot.strategies.rules import CANDLE_SIZES, EXIT_PARAMS, RULES, SpecError
 
 from . import lab
 from .ai import AIError, IdeaGenerator
 from .auth import Auth
+from .martingale import MartingaleManager
 from .pipeline import QUEUE_SIZE, Alerts, LabOptions, LabPipeline
 from .runner import BotManager
 from .settings import LAB_PREFIX, Settings
@@ -38,7 +40,8 @@ DEFAULT_LAB_SYMBOLS = "frxEURUSD,frxGBPUSD,frxUSDJPY,frxAUDUSD"
 class App:
     """Everything the routes need, built once from the environment."""
 
-    def __init__(self, env: dict | None = None, *, fetch=None, ai_client=None, bot_factory=None):
+    def __init__(self, env: dict | None = None, *, fetch=None, ai_client=None, bot_factory=None,
+                 martingale_factory=None):
         env = dict(os.environ if env is None else env)
         state = Path(env.get("STATE_DIR") or "state")
         self.env = env
@@ -47,6 +50,9 @@ class App:
         self.alerts = Alerts(state / "alerts.json")
         kwargs = {"bot_factory": bot_factory} if bot_factory else {}
         self.bot = BotManager(self.settings, state, **kwargs)
+        self.martingale = MartingaleManager(
+            self.settings, state,
+            **({"runner_factory": martingale_factory} if martingale_factory else {}))
         self.auth = Auth(env.get("APP_PASSWORD_HASH", ""), env.get("APP_TOTP_SECRET", ""),
                          env.get("APP_SECRET_KEY", ""))
         self.ai = IdeaGenerator(env.get("OPENROUTER_API_KEY", ""),
@@ -77,8 +83,11 @@ def create_app(env: dict | None = None, *, background: bool = True, **kwargs) ->
         if background:
             state.pipeline.start()
             await state.bot.resume_after_boot()
+            if not state.bot.running:
+                await state.martingale.resume_after_boot()
         yield
         await state.bot.shutdown()
+        await state.martingale.shutdown()
         await state.pipeline.stop()
 
     app = FastAPI(title="Trading Bot", lifespan=lifespan, docs_url=None, redoc_url=None,
@@ -161,6 +170,9 @@ def create_app(env: dict | None = None, *, background: bool = True, **kwargs) ->
 
     @app.post("/api/bot/start", dependencies=[Depends(user)])
     async def start():
+        if state.martingale.running:
+            raise HTTPException(400, "stop the martingale test first; both would trade "
+                                "the same demo account")
         try:
             await state.bot.start()
         except (ConfigError, ValueError) as exc:
@@ -175,7 +187,48 @@ def create_app(env: dict | None = None, *, background: bool = True, **kwargs) ->
     @app.post("/api/bot/stop-all", dependencies=[Depends(user)])
     async def stop_all():
         await state.bot.stop_all()
+        await state.martingale.stop()
         return state.bot.status()
+
+    # ---- demo martingale test ----------------------------------------------------
+
+    @app.get("/api/martingale", dependencies=[Depends(user)])
+    def martingale_status():
+        return state.martingale.status()
+
+    @app.put("/api/martingale/settings", dependencies=[Depends(user)])
+    async def martingale_settings(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "send an object of settings")
+        try:
+            state.martingale.update(body)
+        except MartingaleError as exc:
+            raise HTTPException(400, str(exc)) from None
+        return state.martingale.status()
+
+    @app.post("/api/martingale/start", dependencies=[Depends(user)])
+    async def martingale_start():
+        if state.bot.running:
+            raise HTTPException(400, "pause the bot first; both would trade the same demo account")
+        try:
+            await state.martingale.start()
+        except (ConfigError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from None
+        return state.martingale.status()
+
+    @app.post("/api/martingale/stop", dependencies=[Depends(user)])
+    async def martingale_stop():
+        await state.martingale.stop()
+        return state.martingale.status()
+
+    @app.post("/api/martingale/reset", dependencies=[Depends(user)])
+    def martingale_reset():
+        try:
+            state.martingale.reset()
+        except MartingaleError as exc:
+            raise HTTPException(400, str(exc)) from None
+        return state.martingale.status()
 
     @app.get("/api/settings", dependencies=[Depends(user)])
     def get_settings():
