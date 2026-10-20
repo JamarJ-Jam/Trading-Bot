@@ -311,7 +311,81 @@ async function strategyScreen() {
         field("Close after minutes (0 = never)", inputs.max_trade_minutes), field("Exit when trend reverses", reverse)]),
     h("span", { class: "label" }, "Safety limits"),
     h("div", { class: "card" }, field("Max stake", inputs.max_stake), field("Max daily loss", inputs.max_daily_loss)),
+    save,
+    h("a", { href: "#/martingale", class: "card" },
+      h("div", { class: "row" }, h("strong", {}, "Martingale test"), h("span", { class: "pill" }, "DEMO")),
+      h("span", { class: "small muted" }, "Run Deriv's Rise/Fall martingale on your demo account and see how sessions and days end.")));
+}
+
+async function martingaleScreen() {
+  const m = await api("/martingale");
+  const s = m.settings, t = m.totals;
+  const num = (v, step = "0.01") => h("input", { type: "number", step, min: "0", inputmode: "decimal", value: String(v), disabled: m.running });
+  const inputs = {
+    stake: num(s.stake), multiplier: num(s.multiplier, "0.1"), max_stake: num(s.max_stake),
+    profit: num(s.profit), loss: num(s.loss), daily_loss_limit: num(s.daily_loss_limit),
+    duration_minutes: num(s.duration_minutes, "1"), sessions: num(s.sessions, "1"),
+  };
+  const symbol = h("input", { value: s.symbol, disabled: m.running });
+  const direction = h("select", { disabled: m.running },
+    h("option", { value: "rise", selected: s.direction === "rise" }, "Rise"),
+    h("option", { value: "fall", selected: s.direction === "fall" }, "Fall"));
+  const refresh = () => martingaleScreen().catch(() => {});
+
+  const save = h("button", {}, "Save settings");
+  save.disabled = m.running;
+  save.addEventListener("click", () => act(save, () => {
+    const body = { symbol: symbol.value.trim(), direction: direction.value };
+    for (const [k, el] of Object.entries(inputs)) body[k] = Number(el.value);
+    return api("/martingale/settings", { method: "PUT", body });
+  }, "Saved").then(refresh));
+  const go = h("button", { class: m.running ? "danger" : "primary" }, m.running ? "Stop test" : "Start test");
+  go.addEventListener("click", () => act(go, () => api(m.running ? "/martingale/stop" : "/martingale/start", { method: "POST" }),
+    m.running ? "Stopped" : "Started on your demo account").then(refresh));
+  const reset = h("button", { class: "small" }, "Clear results");
+  reset.disabled = m.running;
+  reset.addEventListener("click", () => {
+    if (!confirm("Clear the martingale test results?")) return;
+    act(reset, () => api("/martingale/reset", { method: "POST" })).then(refresh);
+  });
+
+  const upRate = t.sessions ? Math.round((t.up / t.sessions) * 100) + "%" : "–";
+  render("Martingale test",
+    h("a", { href: "#/strategy", class: "linkbtn" }, "← Strategy"),
+    header("Martingale test", h("span", { class: "pill" }, "DEMO ONLY")),
+    h("div", { class: "notice info" }, h("strong", {}, "Demo account only"),
+      "Doubles the stake after a loss and resets after a win, like Deriv's Automate. Our replays lose about 2.5% of everything staked on average; this shows how that plays out. It can't run on a real account, or while the bot is running."),
+    h("div", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, m.running ? "Running" : "Stopped"), h("span", { class: "dot " + (m.running ? "on" : "") })),
+      h("span", { class: "sub mono small muted" }, m.status),
+      h("div", { class: "grid3" },
+        h("div", { class: "stack" }, h("span", { class: "small muted" }, "Today"), h("span", { class: "mono " + tone(m.today) }, money(m.today, true))),
+        h("div", { class: "stack" }, h("span", { class: "small muted" }, "Session"), h("span", { class: "mono " + tone(m.session?.result) }, m.session ? money(m.session.result, true) : "–")),
+        h("div", { class: "stack" }, h("span", { class: "small muted" }, "Next stake"), h("span", { class: "mono" }, m.session ? money(m.session.stake) : money(s.stake))))),
+    h("div", { class: "btnrow" }, go),
+    h("span", { class: "label" }, "Results"),
+    h("div", { class: "card" },
+      h("div", { class: "grid3" },
+        h("div", { class: "stack" }, h("span", { class: "small muted" }, "Sessions"), h("span", { class: "mono" }, String(t.sessions))),
+        h("div", { class: "stack" }, h("span", { class: "small muted" }, "Ended up"), h("span", { class: "mono" }, upRate)),
+        h("div", { class: "stack" }, h("span", { class: "small muted" }, "Total"), h("span", { class: "mono " + tone(t.result) }, money(t.result, true)))),
+      m.recent.length ? h("div", { class: "list" }, m.recent.slice(0, 10).map((r) => h("div", { class: "item small" },
+        h("span", { class: "mono" }, `${timeOf(r.end_utc)} · ${r.trades} trade${r.trades === 1 ? "" : "s"} · max ${money(r.biggest_stake)}`),
+        h("span", { class: "mono " + tone(r.result) }, money(r.result, true))))) : h("span", { class: "small muted" }, "No finished sessions yet."),
+      h("div", { class: "row" }, h("span", { class: "small muted" }, "Every trade is also on the Trades tab."), reset)),
+    h("span", { class: "label" }, "Settings"),
+    h("div", { class: "card" },
+      field("Market", symbol), field("Direction", direction), field("Contract minutes", inputs.duration_minutes),
+      field("Start stake ($)", inputs.stake), field("Multiply after a loss", inputs.multiplier), field("Max stake ($)", inputs.max_stake),
+      field("Session profit target ($)", inputs.profit), field("Session loss limit ($)", inputs.loss),
+      field("Daily loss limit ($)", inputs.daily_loss_limit), field("Sessions (0 = keep going)", inputs.sessions)),
     save);
+  clearInterval(poll);
+  poll = setInterval(() => {
+    if (location.hash !== "#/martingale" || ["SELECT", "INPUT"].includes(document.activeElement?.tagName)) return;
+    const y = window.scrollY;
+    martingaleScreen().then(() => window.scrollTo(0, y)).catch(() => {});
+  }, 5000);
 }
 
 const STAGE_INDEX = { queued: 0, backtest: 0, paper: 2, ready: 4, failed: -1 };
@@ -569,7 +643,7 @@ async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/");
   const screens = {
     login: loginScreen, home: homeScreen, "": homeScreen, trades: tradesScreen, strategy: strategyScreen,
-    lab: () => (parts[1] ? labDetailScreen(parts[1]) : labScreen()), builder: builderScreen, live: liveScreen,
+    lab: () => (parts[1] ? labDetailScreen(parts[1]) : labScreen()), builder: builderScreen, live: liveScreen, martingale: martingaleScreen,
   };
   const screen = screens[parts[0]] || homeScreen;
   try {
