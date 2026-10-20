@@ -193,5 +193,6 @@ live Deriv account. Things to watch on the first demo run:
   message lists the allowed values.
 - Field names in `buy` and `proposal_open_contract` responses (`contract_id`,
   `buy_price`, `is_sold`, `profit`) follow the long-standing Deriv API.
-- The Martingale test's Rise/Fall proposal (`contract_type` CALL/PUT,
-  `basis: stake`, `duration_unit: m`, `underlying_symbol`) is untested live.
+- The Martingale test's Rise/Fall orders worked on demo with minutes. Ticks,
+  seconds, hours, days and end time (`date_expiry`) use the same proposal and
+  are untested live.

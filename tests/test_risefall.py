@@ -9,6 +9,8 @@ from bot.risefall import (
     MartingaleError,
     MartingaleRunner,
     MartingaleSettings,
+    contract_length,
+    expiry_epoch,
     next_stake,
 )
 
@@ -149,3 +151,26 @@ def test_settings_are_checked():
                 {"daily_loss_limit": 10, "max_stake": 64}, {"sessions": 1.5}, {"extra": 1}):
         with pytest.raises(MartingaleError):
             MartingaleSettings.from_dict(bad)
+
+
+def test_contract_length_units_and_end_time():
+    now = 1_700_000_000  # 22:13:20 UTC
+    for unit, letter in [("ticks", "t"), ("seconds", "s"), ("minutes", "m"), ("hours", "h"), ("days", "d")]:
+        n = 15 if unit == "seconds" else 5
+        fields, _ = contract_length(MartingaleSettings.from_dict({"duration": n, "duration_unit": unit}), now)
+        assert fields == {"duration": n, "duration_unit": letter}
+    fields, seconds = contract_length(MartingaleSettings.from_dict(
+        {"duration_unit": "end_time", "end_time": "22:30"}), now)
+    assert fields == {"date_expiry": now + 1000} and seconds == 1000
+    # A time already passed today (or under a minute away) means tomorrow.
+    assert expiry_epoch("22:13", now) == now - 20 + 86400
+    assert expiry_epoch("22:14", now) == now + 40 + 86400
+    for bad in ({"duration": 5, "duration_unit": "seconds"}, {"duration": 11, "duration_unit": "ticks"},
+                {"duration_unit": "weeks"}, {"duration_unit": "end_time", "end_time": "25:00"}):
+        with pytest.raises(MartingaleError):
+            MartingaleSettings.from_dict(bad)
+
+
+def test_old_saved_settings_still_load():
+    s = MartingaleSettings.from_dict({"duration_minutes": 3, "stake": 2})
+    assert (s.duration, s.duration_unit, s.stake) == (3, "minutes", 2)
