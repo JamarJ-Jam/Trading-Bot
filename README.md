@@ -69,6 +69,7 @@ bot/
   __main__.py      entry point (python -m bot, --check)
   backtest.py      python -m bot.backtest: replay past prices
   martingale.py    python -m bot.martingale: replay Deriv's Automate martingale (study only)
+  risefall.py      demo-only Rise/Fall martingale runner (the app's Martingale test)
   config.py        settings from .env, with validation
   deriv_client.py  REST + WebSocket client, req_id matching, throttle
   risk.py          hard limits and persisted daily state
@@ -161,6 +162,15 @@ python -m bot.martingale --sim 30000        # coin flips instead of downloaded p
 
 Every session goes to `logs/martingale_sessions.csv`.
 
+To run the same martingale for real on the **demo** account, open the app's
+Strategy screen and pick **Martingale test**. It buys Rise/Fall contracts,
+doubles after a loss up to the max stake, and stops each session at the profit
+or loss threshold, with a daily loss limit on top. It is locked to demo: the
+settings are forced to demo and it stops if Deriv reports any other account.
+It can't run while the bot runs (both would use the same account), the STOP
+file stops it, every trade goes to `logs/trades.csv` and every session to
+`logs/martingale_sessions_live.csv`.
+
 ## Adding a strategy
 
 Subclass `Strategy` in `bot/strategies/`, return `Signal("UP" | "DOWN", reason)`
@@ -183,3 +193,5 @@ live Deriv account. Things to watch on the first demo run:
   message lists the allowed values.
 - Field names in `buy` and `proposal_open_contract` responses (`contract_id`,
   `buy_price`, `is_sold`, `profit`) follow the long-standing Deriv API.
+- The Martingale test's Rise/Fall proposal (`contract_type` CALL/PUT,
+  `basis: stake`, `duration_unit: m`, `underlying_symbol`) is untested live.

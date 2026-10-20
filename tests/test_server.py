@@ -408,3 +408,43 @@ def test_ai_ideas_per_day_is_a_lab_setting(tmp_path):
                      headers=HEADERS).status_code == 400
     # A restart keeps the saved value.
     assert client(tmp_path, extra={"OPENROUTER_API_KEY": "or-key"}).app.state.app.ai.daily_cap == 100
+
+
+class FakeMartingale:
+    def __init__(self, cfg, settings, state_path):
+        self.cfg, self.settings = cfg, settings
+        self.state = {"sessions_done": 0}
+        self.status = "starting"
+        self._stop = asyncio.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    async def run(self):
+        self.status = "running"
+        await self._stop.wait()
+        self.status = "stopped"
+
+    def summary(self):
+        return {"status": self.status, "today": 0.0, "session": None, "pending": None,
+                "totals": {"sessions": 0, "up": 0, "down": 0, "result": 0.0, "trades": 0},
+                "recent": []}
+
+
+def test_martingale_test_and_bot_never_run_together(tmp_path):
+    with client(tmp_path, martingale_factory=FakeMartingale) as c:
+        login(c)
+        r = c.put("/api/martingale/settings", json={"stake": 2, "max_stake": 32}, headers=HEADERS)
+        assert r.status_code == 200 and r.json()["settings"]["stake"] == 2
+        assert c.put("/api/martingale/settings", json={"direction": "sideways"},
+                     headers=HEADERS).status_code == 400
+
+        assert c.post("/api/martingale/start", headers=HEADERS).json()["running"] is True
+        assert c.post("/api/bot/start", headers=HEADERS).status_code == 400
+        assert c.put("/api/martingale/settings", json={"stake": 3},
+                     headers=HEADERS).status_code == 400  # not while running
+        assert c.post("/api/martingale/stop", headers=HEADERS).json()["running"] is False
+
+        assert c.post("/api/bot/start", headers=HEADERS).status_code == 200
+        assert c.post("/api/martingale/start", headers=HEADERS).status_code == 400
+        c.post("/api/bot/stop-all", headers=HEADERS)
