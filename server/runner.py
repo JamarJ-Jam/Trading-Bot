@@ -58,6 +58,8 @@ class BotManager:
             if self.running:
                 return
             cfg = self.settings.config()
+            if not cfg.symbol:
+                raise ConfigError("pick a market on the Strategy screen before starting the bot")
             strategy = self.settings.strategy(cfg)
             Path(cfg.kill_switch_file).unlink(missing_ok=True)
             self.bot = self.bot_factory(cfg, strategy=strategy)

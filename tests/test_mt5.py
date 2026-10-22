@@ -137,6 +137,8 @@ def test_config_for_mt5():
     assert cfg.is_mt5 and cfg.api_token == "" and cfg.mt5_login == ""
     with pytest.raises(ConfigError, match="SYMBOL"):
         Config.from_env({"BROKER": "mt5"})
+    assert Config.from_env({"BROKER": "mt5"}, app=True).symbol == ""
+    assert Config.from_env({"DERIV_API_TOKEN": "t", "DERIV_APP_ID": "a"}).symbol == "1HZ100V"
     with pytest.raises(ConfigError, match="MT5_PASSWORD"):
         Config.from_env({"BROKER": "mt5", "SYMBOL": "EURUSD", "MT5_LOGIN": "123"})
     with pytest.raises(ConfigError, match="BROKER"):

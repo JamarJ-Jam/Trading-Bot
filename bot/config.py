@@ -115,7 +115,10 @@ class Config:
         return self.account_type == "real"
 
     @classmethod
-    def from_env(cls, env: dict | None = None) -> "Config":
+    def from_env(cls, env: dict | None = None, *, app: bool = False) -> "Config":
+        """`app=True` is for the phone app: on MT5 it accepts an empty SYMBOL
+        so the app can open and let you pick a market (trading stays
+        blocked until you do). The command-line bot always insists on one."""
         if env is None:
             env = dict(os.environ)
 
@@ -129,7 +132,7 @@ class Config:
                 raise ConfigError("DERIV_API_TOKEN is not set. Put it in your .env file.")
             if not app_id:
                 raise ConfigError("DERIV_APP_ID is not set. Put it in your .env file.")
-        elif not _get(env, "SYMBOL"):
+        elif not _get(env, "SYMBOL") and not app:
             raise ConfigError("Set SYMBOL to the name MetaTrader 5 shows, "
                               "e.g. SYMBOL=Volatility 100 (1s) Index or SYMBOL=EURUSD")
         login = _get(env, "MT5_LOGIN")
@@ -156,7 +159,7 @@ class Config:
             account_type=account_type,
             account_id=_get(env, "DERIV_ACCOUNT_ID"),
             strategy=_get(env, "STRATEGY", "watch").lower(),
-            symbol=_get(env, "SYMBOL", "1HZ100V"),
+            symbol=_get(env, "SYMBOL", "" if broker == "mt5" else "1HZ100V"),
             multiplier=_int(env, "MULTIPLIER", "40"),
             dry_run=_bool(env, "DRY_RUN"),
             stake=_money(env, "STAKE", "1.00"),

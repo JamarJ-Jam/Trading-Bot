@@ -93,7 +93,9 @@ Other MT5 settings (all optional):
 
 `MULTIPLIER` does nothing on MT5.
 
-In the phone app you don't need to edit `SYMBOL`: Strategy > Market is a
+In the phone app you can leave `SYMBOL` empty: the app opens, and the bot
+won't start until you pick a market on the Strategy screen. (`python -m bot`
+on the command line still needs `SYMBOL` set.) In the phone app you don't need to edit `SYMBOL`: Strategy > Market is a
 drop-down of common markets (it shows MT5 names when `BROKER=mt5`). Pick
 "Other" to type a symbol that isn't listed; it must match Market Watch
 exactly. `MARKETS_MT5=ETHUSD:Ethereum,EURUSD:EUR/USD` in `.env` replaces the list.
