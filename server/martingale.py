@@ -12,6 +12,7 @@ import logging
 from dataclasses import asdict
 from pathlib import Path
 
+from bot.config import ConfigError
 from bot.risefall import MartingaleError, MartingaleRunner, MartingaleSettings
 
 from .settings import Settings
@@ -65,6 +66,9 @@ class MartingaleManager:
             if self.running:
                 return
             cfg = self.settings.config()
+            if cfg.is_mt5:
+                raise ConfigError("the martingale test uses Deriv Rise/Fall contracts, "
+                                  "which MetaTrader 5 does not have; set BROKER=deriv for it")
             Path(cfg.kill_switch_file).unlink(missing_ok=True)
             self.runner = self.runner_factory(cfg, self.options(), self.state_path)
             if fresh_count:

@@ -128,6 +128,7 @@ class Settings:
         except ConfigError:
             pass
         return {
+            "broker": cfg.broker,
             "account_type": cfg.account_type,
             "strategy": cfg.strategy,
             "strategy_name": entry["name"] if entry else cfg.strategy,

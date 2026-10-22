@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from .config import Config
 from .deriv_client import DerivClient, DerivError, NotConnected
+from .mt5_client import Mt5Client
 from .risk import RiskManager
 from .strategies import Signal, Strategy, make_strategy
 from .trade_log import TradeLog
@@ -42,7 +43,9 @@ class TradingBot:
         trade_log: TradeLog | None = None,
     ):
         self.cfg = cfg
-        self.client = client or DerivClient(cfg, self.handle_message)
+        if client is None:
+            client = (Mt5Client if cfg.is_mt5 else DerivClient)(cfg, self.handle_message)
+        self.client = client
         self.strategy = strategy or make_strategy(cfg.strategy)
         self.risk = risk or RiskManager(cfg)
         self.trades = trade_log or TradeLog(cfg.log_dir)
@@ -71,10 +74,13 @@ class TradingBot:
                 backoff = 1.0
                 await self._run_connected()
             except DerivError as exc:
+                if getattr(exc, "fatal", False):
+                    log.error("Stopped: %s", exc)
+                    raise
                 if exc.code in FATAL_CODES:
                     log.error("Deriv refused our credentials (%s). Check the token and App ID.", exc)
                     raise
-                log.warning("Deriv error: %s", exc)
+                log.warning("%s error: %s", "MT5" if self.cfg.is_mt5 else "Deriv", exc)
             except (OSError, NotConnected, asyncio.TimeoutError) as exc:
                 log.warning("Connection problem: %s", exc or type(exc).__name__)
             except Exception as exc:  # websockets.ConnectionClosed and friends

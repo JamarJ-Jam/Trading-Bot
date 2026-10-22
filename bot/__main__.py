@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 
 from .bot import TradingBot
 from .config import Config, ConfigError
-from .deriv_client import DerivClient, DerivError
+from .deriv_client import DerivClient, DerivError, NotConnected
+from .mt5_client import Mt5Client
 from .trade_log import setup_logging
 
 log = logging.getLogger("bot")
@@ -44,6 +45,33 @@ async def check(cfg: Config) -> int:
     return 0
 
 
+async def check_mt5(cfg: Config) -> int:
+    """Attach to the MetaTrader 5 terminal and read one price, without trading."""
+
+    async def ignore(_msg: dict) -> None:
+        return None
+
+    client = Mt5Client(cfg, ignore)
+    await client.connect()
+    try:
+        acc = client.account or {}
+        log.info("MT5 account %s (%s) on %s: %s %s", acc.get("account_id"),
+                 acc.get("account_type"), acc.get("server"), acc.get("currency"),
+                 acc.get("balance"))
+        tick = (await client.request({"ticks": cfg.symbol})).get("tick") or {}
+        log.info("Latest %s price: bid %s, ask %s", cfg.symbol, tick.get("quote"), tick.get("ask"))
+        quote = (await client.request({
+            "proposal": 1, "amount": cfg.stake, "contract_type": "MULTUP",
+            "limit_order": {"stop_loss": cfg.stop_loss} if cfg.stop_loss else {},
+        })).get("proposal") or {}
+        log.info("A buy now would be %s lots with its stop loss at %s, risking %.2f",
+                 quote.get("volume"), quote.get("stop_loss_price"), quote.get("ask_price"))
+    finally:
+        await client.close()
+    log.info("Connection check passed. Nothing was traded.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m bot", description=__doc__)
     parser.add_argument("--check", action="store_true",
@@ -57,31 +85,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Setup problem: {exc}", file=sys.stderr)
         return 2
 
-    setup_logging(cfg.log_dir, secrets=(cfg.api_token,))
+    setup_logging(cfg.log_dir, secrets=(cfg.api_token, cfg.mt5_password))
     mode = "REAL MONEY" if cfg.is_real else "demo"
-    log.info("Starting on %s account | strategy %s | stake %.2f | max daily loss %.2f",
-             mode, cfg.strategy, cfg.stake, cfg.max_daily_loss)
+    log.info("Starting on %s %s account | strategy %s | stake %.2f | max daily loss %.2f",
+             "MetaTrader 5" if cfg.is_mt5 else "Deriv", mode, cfg.strategy, cfg.stake,
+             cfg.max_daily_loss)
     if cfg.is_real:
         log.warning("REAL MONEY MODE. Create the file %s to stop and close trades.",
                     cfg.kill_switch_file)
 
     try:
         if args.check:
-            return asyncio.run(check(cfg))
+            return asyncio.run(check_mt5(cfg) if cfg.is_mt5 else check(cfg))
         asyncio.run(TradingBot(cfg).run())
-    except DerivError as exc:
+    except (DerivError, NotConnected) as exc:
         log.error("Stopped: %s", exc)
         return 1
     except ValueError as exc:
         log.error("Stopped: %s", exc)
         return 2
     except OSError as exc:
-        log.error("Could not reach Deriv: %s. Check your internet connection.", exc)
+        log.error("Could not reach %s: %s. Check your internet connection.",
+                  "MetaTrader 5" if cfg.is_mt5 else "Deriv", exc)
         return 1
     except KeyboardInterrupt:
-        log.info("Stopped with Ctrl+C. Any open trades stay open on Deriv; "
+        log.info("Stopped with Ctrl+C. Any open trades stay open on %s; "
                  "use the %s file next time to close them on the way out.",
-                 cfg.kill_switch_file)
+                 "MetaTrader 5" if cfg.is_mt5 else "Deriv", cfg.kill_switch_file)
     return 0
 
 
