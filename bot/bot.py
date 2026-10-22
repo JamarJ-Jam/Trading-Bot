@@ -41,8 +41,12 @@ class TradingBot:
         strategy: Strategy | None = None,
         risk: RiskManager | None = None,
         trade_log: TradeLog | None = None,
+        close_on_interrupt: bool = False,
     ):
         self.cfg = cfg
+        # Command line only: Ctrl+C closes open trades first (CLOSE_ON_EXIT).
+        # The app's Pause deliberately leaves them open.
+        self.close_on_interrupt = close_on_interrupt and cfg.close_on_exit
         if client is None:
             client = (Mt5Client if cfg.is_mt5 else DerivClient)(cfg, self.handle_message)
         self.client = client
@@ -110,9 +114,19 @@ class TradingBot:
             raise
         guard = asyncio.create_task(self._guard_loop(), name="guard")
         stopper = asyncio.create_task(self._stop.wait(), name="stopper")
-        done, pending = await asyncio.wait(
-            {reader, guard, stopper}, return_when=asyncio.FIRST_COMPLETED
-        )
+        try:
+            done, pending = await asyncio.wait(
+                {reader, guard, stopper}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            # Ctrl+C. The connection is still up, so close trades before leaving.
+            if self.close_on_interrupt and self.open_trades:
+                log.warning("Ctrl+C: closing open trades before exit (press Ctrl+C again to skip)")
+                await self._close_all("Ctrl+C")
+            for task in (reader, guard, stopper):
+                task.cancel()
+            await asyncio.gather(reader, guard, stopper, return_exceptions=True)
+            raise
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
@@ -387,18 +401,21 @@ class TradingBot:
                 log.info("Status: %s", self.risk.summary())
             await asyncio.sleep(GUARD_INTERVAL)
 
-    async def _kill(self) -> None:
-        log.warning("Kill switch %s found: closing open trades and stopping",
-                    self.cfg.kill_switch_file)
+    async def _close_all(self, why: str) -> None:
         for trade in list(self.open_trades.values()):
-            await self.sell(trade, "kill switch")
+            await self.sell(trade, why)
         for _ in range(15):
             if not self.open_trades:
                 break
             await asyncio.sleep(1)
         if self.open_trades:
-            log.error("Still open after kill switch: %s. Check them on Deriv.",
-                      ", ".join(self.open_trades))
+            log.error("Still open after %s: %s. Check them on %s.", why,
+                      ", ".join(self.open_trades), "MetaTrader 5" if self.cfg.is_mt5 else "Deriv")
+
+    async def _kill(self) -> None:
+        log.warning("Kill switch %s found: closing open trades and stopping",
+                    self.cfg.kill_switch_file)
+        await self._close_all("kill switch")
         self.stop()
 
     def _spawn(self, coro) -> None:

@@ -61,7 +61,7 @@ class Settings:
         return env
 
     def config(self, overrides: dict | None = None) -> Config:
-        cfg = Config.from_env(self.env(overrides))
+        cfg = Config.from_env(self.env(overrides), app=True)
         entry = self.lab_entry(cfg.strategy)
         if entry and entry.get("spec"):
             cfg = apply_exits(cfg, entry["spec"])
@@ -88,6 +88,8 @@ class Settings:
         unknown = set(changes) - set(FIELDS)
         if unknown:
             raise ConfigError(f"cannot change {', '.join(sorted(unknown))} here")
+        if "symbol" in changes and not str(changes["symbol"]).strip():
+            raise ConfigError("pick a market first")
         with self._lock:
             data = self.overrides()
             for field, value in changes.items():

@@ -214,7 +214,9 @@ async function homeScreen() {
           running ? "Running" : bot.state === "error" ? "Error" : "Stopped")),
       h("div", { class: "big" }, bot.balance != null ? money(bot.balance) : "—"),
       h("div", { class: "muted small" },
-        `${st.strategy_name} · ${brokerName(st)} · ${st.symbol}${isMt5(st) ? "" : " · x" + st.multiplier}`),
+        `${st.strategy_name} · ${brokerName(st)} · ${st.symbol || "no market chosen"}${isMt5(st) ? "" : " · x" + st.multiplier}`),
+      st.symbol ? null : h("div", { class: "small" }, h("a", { href: "#/strategy" }, "Choose a market to trade"),
+        " before starting the bot."),
       running && bot.account_id ? h("div", { class: "muted small" },
         `Account ${bot.account_id}${bot.server ? " on " + bot.server : ""}`) : null,
       h("div", { class: "btnrow" }, startBtn, stopBtn)),
@@ -283,12 +285,13 @@ function marketPicker(groups, current, disabled = false) {
   const OTHER = "__other__";
   const known = groups.flatMap((g) => g.items.map((i) => i.value));
   const select = h("select", { disabled },
+    current ? null : h("option", { value: "" }, "Choose a market..."),
     groups.map((g) => h("optgroup", { label: g.group },
       g.items.map((i) => h("option", { value: i.value }, `${i.label} · ${i.value}`)))),
     h("option", { value: OTHER }, "Other (type the symbol)..."));
   const typed = h("input", { value: known.includes(current) ? "" : current, autocapitalize: "off",
     placeholder: "Exact symbol name", disabled });
-  select.value = known.includes(current) ? current : OTHER;
+  select.value = known.includes(current) ? current : current ? OTHER : "";
   const hint = h("div", { class: "muted small" },
     "Not in the list? The name must match the broker's exactly, or the bot will refuse to start.");
   const sync = () => { typed.style.display = hint.style.display = select.value === OTHER ? "" : "none"; };

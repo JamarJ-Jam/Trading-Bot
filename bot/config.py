@@ -90,6 +90,7 @@ class Config:
     pause_minutes: int = 30
     max_trade_minutes: int = 10
     exit_on_reverse: bool = False
+    close_on_exit: bool = True
     take_profit: float | None = None
     stop_loss: float | None = None
     log_dir: Path = Path("logs")
@@ -115,7 +116,10 @@ class Config:
         return self.account_type == "real"
 
     @classmethod
-    def from_env(cls, env: dict | None = None) -> "Config":
+    def from_env(cls, env: dict | None = None, *, app: bool = False) -> "Config":
+        """`app=True` is for the phone app: on MT5 it accepts an empty SYMBOL
+        so the app can open and let you pick a market (trading stays
+        blocked until you do). The command-line bot always insists on one."""
         if env is None:
             env = dict(os.environ)
 
@@ -129,7 +133,7 @@ class Config:
                 raise ConfigError("DERIV_API_TOKEN is not set. Put it in your .env file.")
             if not app_id:
                 raise ConfigError("DERIV_APP_ID is not set. Put it in your .env file.")
-        elif not _get(env, "SYMBOL"):
+        elif not _get(env, "SYMBOL") and not app:
             raise ConfigError("Set SYMBOL to the name MetaTrader 5 shows, "
                               "e.g. SYMBOL=Volatility 100 (1s) Index or SYMBOL=EURUSD")
         login = _get(env, "MT5_LOGIN")
@@ -156,7 +160,7 @@ class Config:
             account_type=account_type,
             account_id=_get(env, "DERIV_ACCOUNT_ID"),
             strategy=_get(env, "STRATEGY", "watch").lower(),
-            symbol=_get(env, "SYMBOL", "1HZ100V"),
+            symbol=_get(env, "SYMBOL", "" if broker == "mt5" else "1HZ100V"),
             multiplier=_int(env, "MULTIPLIER", "40"),
             dry_run=_bool(env, "DRY_RUN"),
             stake=_money(env, "STAKE", "1.00"),
@@ -168,6 +172,7 @@ class Config:
             pause_minutes=_int(env, "PAUSE_MINUTES", "30"),
             max_trade_minutes=_int(env, "MAX_TRADE_MINUTES", "10"),
             exit_on_reverse=_bool(env, "EXIT_ON_REVERSE"),
+            close_on_exit=_bool(env, "CLOSE_ON_EXIT", "true"),
             take_profit=_optional_money(env, "TAKE_PROFIT"),
             stop_loss=_optional_money(env, "STOP_LOSS"),
             log_dir=Path(_get(env, "LOG_DIR", "logs")),

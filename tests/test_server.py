@@ -132,6 +132,18 @@ def test_settings_are_validated_like_the_bot(tmp_path):
     assert c.put("/api/settings", json={"strategy": "nope"}, headers=HEADERS).status_code == 400
 
 
+def test_mt5_app_opens_without_a_market_but_will_not_trade_until_one_is_picked(tmp_path):
+    with client(tmp_path, extra={"BROKER": "mt5", "DERIV_API_TOKEN": ""}) as c:
+        login(c)
+        assert c.get("/api/status").json()["settings"]["symbol"] == ""
+        r = c.post("/api/bot/start", headers=HEADERS)
+        assert r.status_code == 400 and "pick a market" in r.json()["detail"]
+        r = c.put("/api/settings", json={"symbol": "  "}, headers=HEADERS)
+        assert r.status_code == 400 and "pick a market" in r.json()["detail"]
+        assert c.put("/api/settings", json={"symbol": "EURUSD"}, headers=HEADERS).status_code == 200
+        assert c.post("/api/bot/start", headers=HEADERS).json()["state"] == "running"
+
+
 def test_markets_follow_the_broker_and_can_be_overridden(tmp_path):
     c = client(tmp_path)
     login(c)

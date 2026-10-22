@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.check:
             return asyncio.run(check_mt5(cfg) if cfg.is_mt5 else check(cfg))
-        asyncio.run(TradingBot(cfg).run())
+        asyncio.run(TradingBot(cfg, close_on_interrupt=True).run())
     except (DerivError, NotConnected) as exc:
         log.error("Stopped: %s", exc)
         return 1
@@ -109,9 +109,9 @@ def main(argv: list[str] | None = None) -> int:
                   "MetaTrader 5" if cfg.is_mt5 else "Deriv", exc)
         return 1
     except KeyboardInterrupt:
-        log.info("Stopped with Ctrl+C. Any open trades stay open on %s; "
-                 "use the %s file next time to close them on the way out.",
-                 "MetaTrader 5" if cfg.is_mt5 else "Deriv", cfg.kill_switch_file)
+        log.info("Stopped with Ctrl+C. Any trade still open stays open on %s with its "
+                 "own stop loss; the bot picks it up again on the next start.",
+                 "MetaTrader 5" if cfg.is_mt5 else "Deriv")
     return 0
 
 

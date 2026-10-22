@@ -93,7 +93,9 @@ Other MT5 settings (all optional):
 
 `MULTIPLIER` does nothing on MT5.
 
-In the phone app you don't need to edit `SYMBOL`: Strategy > Market is a
+In the phone app you can leave `SYMBOL` empty: the app opens, and the bot
+won't start until you pick a market on the Strategy screen. (`python -m bot`
+on the command line still needs `SYMBOL` set.) In the phone app you don't need to edit `SYMBOL`: Strategy > Market is a
 drop-down of common markets (it shows MT5 names when `BROKER=mt5`). Pick
 "Other" to type a symbol that isn't listed; it must match Market Watch
 exactly. `MARKETS_MT5=ETHUSD:Ethereum,EURUSD:EUR/USD` in `.env` replaces the list.
@@ -135,11 +137,13 @@ Then:
    orders appear in MT5's **Trade** tab (comment `trading-bot`) and close.
 3. Any other strategy, on demo, and compare with its backtest.
 
-Stop it with the kill switch: create a file named `STOP` in the
-`Trading-Bot` folder (`ni STOP` in PowerShell). The bot closes its positions
-and exits. Ctrl+C stops the bot but leaves positions open with their stop
-loss and take profit; the bot picks them up again on the next start. You can
-always close them by hand in MT5.
+Stop it with **Ctrl+C**: the bot closes its open positions, then exits
+(press Ctrl+C a second time to exit at once and leave them open). If you'd
+rather leave positions open on exit, set `CLOSE_ON_EXIT=false`; they keep
+their stop loss and the bot picks them up again on the next start. The `STOP`
+file (`ni STOP` in PowerShell) does the same as Ctrl+C from another window,
+and the app's **Stop all trading** button does it for you. You can always
+close positions by hand in MT5.
 
 Use an MT5 account (or at least a symbol) only for the bot. On a **netting**
 account MT5 merges all positions on a symbol into one, so the bot needs
