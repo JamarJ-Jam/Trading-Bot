@@ -1,6 +1,6 @@
 // Caches the app shell so it opens instantly from the home screen.
 // API calls always go to the network: trading data must never be stale.
-const CACHE = "trading-bot-v1";
+const CACHE = "trading-bot-v2";
 const SHELL = ["/", "/assets/app.css", "/assets/app.js", "/assets/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

@@ -93,6 +93,11 @@ Other MT5 settings (all optional):
 
 `MULTIPLIER` does nothing on MT5.
 
+In the phone app you don't need to edit `SYMBOL`: Strategy > Market is a
+drop-down of common markets (it shows MT5 names when `BROKER=mt5`). Pick
+"Other" to type a symbol that isn't listed; it must match Market Watch
+exactly. `MARKETS_MT5=ETHUSD:Ethereum,EURUSD:EUR/USD` in `.env` replaces the list.
+
 ## 5. How a trade works on MT5
 
 On Deriv a multiplier trade can lose at most its stake. MT5 has no such

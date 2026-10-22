@@ -26,6 +26,7 @@ from bot.strategies.rules import CANDLE_SIZES, EXIT_PARAMS, RULES, SpecError
 from . import lab
 from .ai import AIError, IdeaGenerator
 from .auth import Auth
+from .markets import markets_for
 from .martingale import MartingaleManager
 from .pipeline import QUEUE_SIZE, Alerts, LabOptions, LabPipeline
 from .runner import BotManager
@@ -233,6 +234,11 @@ def create_app(env: dict | None = None, *, background: bool = True, **kwargs) ->
     @app.get("/api/settings", dependencies=[Depends(user)])
     def get_settings():
         return state.settings.public(state.config())
+
+    @app.get("/api/markets", dependencies=[Depends(user)])
+    def markets():
+        return {"markets": markets_for(state.config().broker, state.env),
+                "deriv": markets_for("deriv", state.env)}
 
     @app.put("/api/settings", dependencies=[Depends(user)])
     async def put_settings(request: Request):
