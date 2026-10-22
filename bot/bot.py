@@ -61,6 +61,8 @@ class TradingBot:
         self._stop = asyncio.Event()
         self._last_refusal = ""
         self._last_summary = time.monotonic()
+        self.last_price: float | None = None
+        self.last_tick_at: float | None = None  # wall-clock seconds
 
         if self.strategy.demo_only and cfg.is_real:
             raise ValueError(f"Strategy {self.strategy.name!r} is for demo accounts only")
@@ -237,6 +239,7 @@ class TradingBot:
             price, epoch = float(tick["quote"]), int(tick["epoch"])
         except (KeyError, TypeError, ValueError):
             return
+        self.last_price, self.last_tick_at = price, time.time()
         signal = self.strategy.on_tick(price, epoch)
         if signal is not None and not self._placing:
             self._placing = True

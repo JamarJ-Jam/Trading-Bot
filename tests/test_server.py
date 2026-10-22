@@ -114,6 +114,8 @@ def test_start_pause_and_stop_all(tmp_path):
         r = c.post("/api/bot/start", headers=HEADERS)
         assert r.json()["state"] == "running"
         assert not stop_file.exists()
+        status = c.get("/api/status").json()["bot"]
+        assert status["price"] is None and status["price_age"] is None and status["note"] == ""
         assert c.post("/api/bot/pause", headers=HEADERS).json()["state"] == "stopped"
         c.post("/api/bot/start", headers=HEADERS)
         assert c.post("/api/bot/stop-all", headers=HEADERS).json()["state"] == "stopped"

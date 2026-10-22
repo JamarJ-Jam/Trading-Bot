@@ -375,3 +375,15 @@ async def test_ctrl_c_leaves_trades_open_when_not_asked_or_switched_off(cfg):
     assert "sell" not in client.kinds() and "555" in bot.open_trades
     client, bot = await run_then_ctrl_c(replace(cfg, close_on_exit=False), True)
     assert "sell" not in client.kinds()
+
+
+async def test_bot_remembers_the_last_price_for_the_app(cfg):
+    from bot.strategies.trend import TrendFollow
+    bot = make_bot(cfg, FakeClient(), TrendFollow(fast=2, slow=3))
+    assert bot.last_price is None
+    bot._on_tick({"quote": 100.5, "epoch": 1000})
+    assert bot.last_price == 100.5 and bot.last_tick_at is not None
+    assert "Warming up: 0 of 4" in bot.strategy.status()
+    for i in range(1, 8):
+        bot._on_tick({"quote": 100.0 + i, "epoch": 1000 + 60 * i})
+    assert "Waiting for EMA2 to cross EMA3" in bot.strategy.status()
