@@ -145,4 +145,5 @@ class BotManager:
             "balance": account.get("balance"),
             "currency": account.get("currency") or "USD",
             "account_id": account.get("account_id", ""),
+            "server": account.get("server", ""),
         }
