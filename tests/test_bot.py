@@ -310,3 +310,68 @@ async def test_no_rejoin_after_stop_out(cfg):
     await bot._adopt_open_contracts()
     bot._on_contract({"contract_id": 111, "is_sold": 1, "profit": -1.0})
     assert not bot._tasks and "proposal" not in client.kinds()
+
+
+class Quiet(Strategy):
+    name = "quiet"
+
+    def on_tick(self, price, epoch):
+        return None
+
+
+class StreamingClient(FakeClient):
+    """FakeClient with a connection: sells report back as closed contracts."""
+
+    def __init__(self):
+        super().__init__()
+        self.bot = None
+
+    async def connect(self):
+        pass
+
+    async def close(self):
+        pass
+
+    async def reader(self):
+        await asyncio.sleep(3600)
+
+    async def request(self, payload):
+        msg = await super().request(payload)
+        if "sell" in payload:
+            await self.bot.handle_message({"msg_type": "proposal_open_contract",
+                                           "proposal_open_contract": {
+                                               "contract_id": payload["sell"], "is_sold": 1,
+                                               "profit": -0.1}})
+        return msg
+
+
+async def run_then_ctrl_c(cfg, close_on_interrupt):
+    from dataclasses import replace
+    cfg = replace(cfg, max_trade_minutes=0)  # the fake contract started in 1970
+    client = StreamingClient()
+    risk = RiskManager(cfg)
+    risk.record_open("555", 1.0)
+    bot = TradingBot(cfg, client=client, strategy=Quiet(), risk=risk,
+                     trade_log=TradeLog(cfg.log_dir), close_on_interrupt=close_on_interrupt)
+    client.bot = bot
+    task = asyncio.create_task(bot.run())
+    while "ticks" not in client.kinds():
+        await asyncio.sleep(0.01)
+    task.cancel()  # what Ctrl+C does to the main task
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    return client, bot
+
+
+async def test_ctrl_c_closes_open_trades(cfg):
+    client, bot = await run_then_ctrl_c(cfg, True)
+    assert "sell" in client.kinds()
+    assert bot.open_trades == {}
+
+
+async def test_ctrl_c_leaves_trades_open_when_not_asked_or_switched_off(cfg):
+    from dataclasses import replace
+    client, bot = await run_then_ctrl_c(cfg, False)
+    assert "sell" not in client.kinds() and "555" in bot.open_trades
+    client, bot = await run_then_ctrl_c(replace(cfg, close_on_exit=False), True)
+    assert "sell" not in client.kinds()

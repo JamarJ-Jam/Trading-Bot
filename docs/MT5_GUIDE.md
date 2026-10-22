@@ -137,11 +137,13 @@ Then:
    orders appear in MT5's **Trade** tab (comment `trading-bot`) and close.
 3. Any other strategy, on demo, and compare with its backtest.
 
-Stop it with the kill switch: create a file named `STOP` in the
-`Trading-Bot` folder (`ni STOP` in PowerShell). The bot closes its positions
-and exits. Ctrl+C stops the bot but leaves positions open with their stop
-loss and take profit; the bot picks them up again on the next start. You can
-always close them by hand in MT5.
+Stop it with **Ctrl+C**: the bot closes its open positions, then exits
+(press Ctrl+C a second time to exit at once and leave them open). If you'd
+rather leave positions open on exit, set `CLOSE_ON_EXIT=false`; they keep
+their stop loss and the bot picks them up again on the next start. The `STOP`
+file (`ni STOP` in PowerShell) does the same as Ctrl+C from another window,
+and the app's **Stop all trading** button does it for you. You can always
+close positions by hand in MT5.
 
 Use an MT5 account (or at least a symbol) only for the bot. On a **netting**
 account MT5 merges all positions on a symbol into one, so the bot needs
