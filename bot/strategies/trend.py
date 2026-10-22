@@ -65,6 +65,16 @@ class TrendFollow(Strategy):
             return None
         return "UP" if self._prev_diff > 0 else "DOWN" if self._prev_diff < 0 else None
 
+    def status(self) -> str:
+        need = self.slow_len + 1
+        if self.candles_seen < need:
+            return (f"Warming up: {self.candles_seen} of {need} candles "
+                    f"({self.candle_seconds}s each) before it can trade")
+        lean = self.current_direction()
+        side = {"UP": "up", "DOWN": "down"}.get(lean or "", "flat")
+        return (f"Leaning {side}. Waiting for EMA{self.fast_len} to cross "
+                f"EMA{self.slow_len} on {self.candle_seconds}s candles")
+
     def _on_candle_close(self, close: float) -> Signal | None:
         self.candles_seen += 1
         diff = self.fast.update(close) - self.slow.update(close)

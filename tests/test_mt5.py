@@ -301,3 +301,17 @@ async def test_rejected_order_says_why(mcfg):
     quote = (await client.request({"proposal": 1, "amount": 1.0, "contract_type": "MULTUP"}))["proposal"]
     with pytest.raises(Mt5Error, match="Internal error.*Unsupported filling mode"):
         await client.request({"buy": quote["id"], "price": 1.0})
+
+
+async def test_balance_follows_the_account(mcfg):
+    client, fake = await connected(mcfg)
+    assert client.account["balance"] == 10000.0
+    fake.account = fake.account._replace(balance=9990.5)
+    reader = asyncio.create_task(client.reader())
+    for _ in range(40):
+        if client.account["balance"] == 9990.5:
+            break
+        await asyncio.sleep(0.05)
+    await client.close()
+    await asyncio.wait_for(reader, 2)
+    assert client.account["balance"] == 9990.5

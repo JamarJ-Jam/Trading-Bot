@@ -148,4 +148,8 @@ class BotManager:
             "currency": account.get("currency") or "USD",
             "account_id": account.get("account_id", ""),
             "server": account.get("server", ""),
+            "price": getattr(bot, "last_price", None),
+            "price_age": (round(time.time() - bot.last_tick_at, 1)
+                          if getattr(bot, "last_tick_at", None) else None),
+            "note": bot.strategy.status() if bot and bot.strategy else "",
         }

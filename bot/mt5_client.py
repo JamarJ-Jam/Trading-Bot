@@ -202,6 +202,9 @@ class Mt5Client:
                 terminal = await self._call(mt5.terminal_info)
                 if terminal is None or not terminal.connected:
                     raise NotConnected("MetaTrader 5 lost its connection to the broker")
+                acc = await self._call(mt5.account_info)
+                if acc is not None and self.account is not None:
+                    self.account["balance"] = acc.balance  # the app shows this
                 for ticket in list(self._tracked):
                     try:
                         msg = await self._contract_msg(ticket)

@@ -34,5 +34,10 @@ class Strategy:
         used to catch up on a reversal missed while the bot was offline."""
         return None
 
+    def status(self) -> str:
+        """Optional: one plain sentence on what the strategy is waiting for,
+        shown on the app's home screen."""
+        return ""
+
     def on_trade_closed(self, profit: float) -> None:
         """Optional hook: called when one of the bot's trades closes."""

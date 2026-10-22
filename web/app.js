@@ -174,6 +174,18 @@ async function loginScreen() {
 }
 
 let poll;
+// What the bot sees right now, so a quiet bot is not mistaken for a stuck one.
+function liveLine(bot) {
+  const age = bot.price_age;
+  const stale = age === null || age === undefined || age > 45;
+  const ago = age == null ? "" : age < 90 ? `${Math.round(age)}s ago` : `${Math.round(age / 60)} min ago`;
+  const price = bot.price == null ? "No price yet" : `Price ${bot.price} · ${ago}`;
+  return h("div", { class: "small" },
+    h("div", { class: stale ? "muted" : "" }, price),
+    stale ? h("div", { class: "muted" }, "No recent price. The market may be closed, or the connection is down.") : null,
+    bot.note ? h("div", { class: "muted" }, bot.note) : null);
+}
+
 async function homeScreen() {
   const [s, alerts] = await Promise.all([api("/status"), api("/alerts")]);
   const phase = phaseNow();
@@ -217,6 +229,7 @@ async function homeScreen() {
         `${st.strategy_name} · ${brokerName(st)} · ${st.symbol || "no market chosen"}${isMt5(st) ? "" : " · x" + st.multiplier}`),
       st.symbol ? null : h("div", { class: "small" }, h("a", { href: "#/strategy" }, "Choose a market to trade"),
         " before starting the bot."),
+      running ? liveLine(bot) : null,
       running && bot.account_id ? h("div", { class: "muted small" },
         `Account ${bot.account_id}${bot.server ? " on " + bot.server : ""}`) : null,
       h("div", { class: "btnrow" }, startBtn, stopBtn)),
@@ -236,7 +249,7 @@ async function homeScreen() {
     h("div", { class: "card" }, tradeList(s.recent, true)));
 
   clearInterval(poll);
-  poll = setInterval(() => { if (location.hash === "#/home" || location.hash === "") homeScreen().catch(() => {}); }, 15000);
+  poll = setInterval(() => { if (location.hash === "#/home" || location.hash === "") homeScreen().catch(() => {}); }, 5000);
 }
 
 const EVENT_LABEL = { opened: "Opened", closed: "Closed", skipped: "Skipped", error: "Error", dry_run: "Dry run" };
