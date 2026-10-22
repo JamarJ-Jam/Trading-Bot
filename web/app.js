@@ -269,8 +269,29 @@ function field(labelText, input) {
   return h("div", { class: "field" }, h("label", { for: id }, labelText), input);
 }
 
+// A drop-down of known markets, plus "Other..." for typing a symbol by hand.
+// `get()` returns the chosen symbol; `extra` is the text box and its hint.
+function marketPicker(groups, current, disabled = false) {
+  const OTHER = "__other__";
+  const known = groups.flatMap((g) => g.items.map((i) => i.value));
+  const select = h("select", { disabled },
+    groups.map((g) => h("optgroup", { label: g.group },
+      g.items.map((i) => h("option", { value: i.value }, `${i.label} · ${i.value}`)))),
+    h("option", { value: OTHER }, "Other (type the symbol)..."));
+  const typed = h("input", { value: known.includes(current) ? "" : current, autocapitalize: "off",
+    placeholder: "Exact symbol name", disabled });
+  select.value = known.includes(current) ? current : OTHER;
+  const hint = h("div", { class: "muted small" },
+    "Not in the list? The name must match the broker's exactly, or the bot will refuse to start.");
+  const sync = () => { typed.style.display = hint.style.display = select.value === OTHER ? "" : "none"; };
+  select.addEventListener("change", sync);
+  sync();
+  return { select, typed, hint, get: () => (select.value === OTHER ? typed.value.trim() : select.value),
+    extra: [typed, hint], on: (fn) => { select.addEventListener("input", fn); typed.addEventListener("input", fn); } };
+}
+
 async function strategyScreen() {
-  const [st, labData] = await Promise.all([api("/settings"), api("/lab")]);
+  const [st, labData, mk] = await Promise.all([api("/settings"), api("/lab"), api("/markets")]);
   const options = [
     ...st.builtin_strategies.map((n) => ({ value: n, label: n.replace("_", " ") })),
     ...labData.entries.map((e) => ({ value: "lab:" + e.id, label: `${e.name} (${stageName(e.stage)})` })),
@@ -279,16 +300,16 @@ async function strategyScreen() {
   strategy.value = st.strategy;
   const num = (v, step = "0.01") => h("input", { type: "number", step, min: "0", inputmode: "decimal", value: v ?? "" });
   const inputs = {
-    symbol: h("input", { value: st.symbol, autocapitalize: "off" }),
     stake: num(st.stake), multiplier: num(st.multiplier, "1"),
     stop_loss: num(st.stop_loss), take_profit: num(st.take_profit),
     max_trade_minutes: num(st.max_trade_minutes, "1"),
     max_stake: num(st.max_stake), max_daily_loss: num(st.max_daily_loss),
   };
+  const market = marketPicker(mk.markets, st.symbol);
   const reverse = h("input", { type: "checkbox", checked: st.exit_on_reverse });
   const save = h("button", { class: "primary", type: "button" }, "Save settings");
   save.addEventListener("click", () => act(save, async () => {
-    const body = { strategy: strategy.value, symbol: inputs.symbol.value.trim(), exit_on_reverse: reverse.checked };
+    const body = { strategy: strategy.value, symbol: market.get(), exit_on_reverse: reverse.checked };
     for (const k of ["stake", "multiplier", "max_stake", "max_daily_loss", "max_trade_minutes"]) body[k] = Number(inputs[k].value);
     for (const k of ["stop_loss", "take_profit"]) body[k] = inputs[k].value === "" ? "" : Number(inputs[k].value);
     if (strategy.value.startsWith("lab:")) {
@@ -304,7 +325,7 @@ async function strategyScreen() {
       h("button", { class: real ? "chip" : "chip on", onclick: () => { if (real) location.hash = "#/live"; } }, "Demo account"),
       h("button", { class: real ? "chip on" : "chip", onclick: () => { if (!real) location.hash = "#/live"; } }, "Real account")),
     h("div", { class: "card" },
-      field("Strategy", strategy), field("Market", inputs.symbol),
+      field("Strategy", strategy), field("Market", market.select), market.extra,
       field("Stake per trade", inputs.stake), field("Multiplier", inputs.multiplier),
       st.lab_strategy ? h("div", { class: "muted small" }, "Exits come from the lab strategy itself.") : [
         field("Stop loss ($)", inputs.stop_loss), field("Take profit ($)", inputs.take_profit),
@@ -320,7 +341,7 @@ async function strategyScreen() {
 let martingaleEdited = false;
 
 async function martingaleScreen() {
-  const m = await api("/martingale");
+  const [m, mk] = await Promise.all([api("/martingale"), api("/markets")]);
   const s = m.settings, t = m.totals;
   const num = (v, step = "0.01") => h("input", { type: "number", step, min: "0", inputmode: "decimal", value: String(v), disabled: m.running });
   const inputs = {
@@ -340,21 +361,22 @@ async function martingaleScreen() {
   };
   unit.addEventListener("change", showLength);
   showLength();
-  const symbol = h("input", { value: s.symbol, disabled: m.running });
+  const symbol = marketPicker(mk.deriv, s.symbol, m.running);
   const direction = h("select", { disabled: m.running },
     h("option", { value: "rise", selected: s.direction === "rise" }, "Rise"),
     h("option", { value: "fall", selected: s.direction === "fall" }, "Fall"));
   const refresh = () => martingaleScreen().catch(() => {});
   // Unsaved edits pause the auto-refresh, which would otherwise put the saved values back.
   martingaleEdited = false;
-  for (const el of [...Object.values(inputs), symbol, direction, unit, endTime]) {
+  for (const el of [...Object.values(inputs), direction, unit, endTime]) {
     el.addEventListener("input", () => { martingaleEdited = true; });
   }
+  symbol.on(() => { martingaleEdited = true; });
 
   const save = h("button", {}, "Save settings");
   save.disabled = m.running;
   const saveSettings = () => {
-    const body = { symbol: symbol.value.trim(), direction: direction.value,
+    const body = { symbol: symbol.get(), direction: direction.value,
       duration_unit: unit.value, end_time: endTime.value };
     for (const [k, el] of Object.entries(inputs)) body[k] = Number(el.value);
     return api("/martingale/settings", { method: "PUT", body });
@@ -400,7 +422,7 @@ async function martingaleScreen() {
       h("div", { class: "row" }, h("span", { class: "small muted" }, "Every trade is also on the Trades tab."), reset)),
     h("span", { class: "label" }, "Settings"),
     h("div", { class: "card" },
-      field("Market", symbol), field("Direction", direction),
+      field("Market", symbol.select), symbol.extra, field("Direction", direction),
       field("Contract length", unit), durationField, endTimeField,
       field("Start stake ($)", inputs.stake), field("Multiply after a loss", inputs.multiplier), field("Max stake ($)", inputs.max_stake),
       field("Session profit target ($)", inputs.profit), field("Session loss limit ($)", inputs.loss),

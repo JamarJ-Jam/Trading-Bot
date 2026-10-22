@@ -132,6 +132,26 @@ def test_settings_are_validated_like_the_bot(tmp_path):
     assert c.put("/api/settings", json={"strategy": "nope"}, headers=HEADERS).status_code == 400
 
 
+def test_markets_follow_the_broker_and_can_be_overridden(tmp_path):
+    c = client(tmp_path)
+    login(c)
+    data = c.get("/api/markets").json()
+    values = [i["value"] for g in data["markets"] for i in g["items"]]
+    assert "cryETHUSD" in values and "1HZ100V" in values
+
+    mt5 = client(tmp_path, extra={"BROKER": "mt5", "SYMBOL": "EURUSD", "DERIV_API_TOKEN": ""})
+    login(mt5)
+    data = mt5.get("/api/markets").json()
+    assert "EURUSD" in [i["value"] for g in data["markets"] for i in g["items"]]
+    assert "cryETHUSD" in [i["value"] for g in data["deriv"] for i in g["items"]]
+
+    mine = client(tmp_path, extra={"MARKETS_DERIV": "frxEURUSD:Euro, cryETHUSD"})
+    login(mine)
+    (group,) = mine.get("/api/markets").json()["markets"]
+    assert group["items"] == [{"value": "frxEURUSD", "label": "Euro"},
+                              {"value": "cryETHUSD", "label": "cryETHUSD"}]
+
+
 def test_real_account_needs_typed_confirmation(tmp_path):
     c = client(tmp_path)
     login(c)
