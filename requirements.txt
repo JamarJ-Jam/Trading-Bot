@@ -1,5 +1,7 @@
 websockets>=12
 python-dotenv>=1.0
+# MetaTrader 5 (BROKER=mt5): official package, Windows only
+MetaTrader5>=5.0.45; sys_platform == "win32"
 # The phone app's server (python -m server)
 fastapi>=0.110
 uvicorn>=0.29

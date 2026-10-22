@@ -18,6 +18,10 @@ in Chrome and add it to the home screen, where it works like an installed app.
 A Cloudflare Worker can't run the bot itself: the bot has to stay connected
 to Deriv all day, and Workers only run for a moment per request.
 
+Trading through **MetaTrader 5** (`BROKER=mt5`)? Then the app runs on a
+Windows machine next to the MT5 terminal, without Docker: see
+[MT5_GUIDE.md](MT5_GUIDE.md#7-the-phone-app-with-mt5).
+
 ## What the app does
 
 | Screen | What it's for |

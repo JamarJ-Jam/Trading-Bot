@@ -54,10 +54,27 @@ def _bool(env: dict, name: str, default: str = "false") -> bool:
     return _get(env, name, default).lower() in {"1", "true", "yes", "on"}
 
 
+def _optional_float(env: dict, name: str) -> float | None:
+    raw = _get(env, name)
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from None
+    if value <= 0:
+        raise ConfigError(f"{name} must be more than 0")
+    return value
+
+
+BROKERS = {"deriv", "mt5"}
+
+
 @dataclass(frozen=True)
 class Config:
     api_token: str = field(repr=False)
     app_id: str
+    broker: str = "deriv"
     account_type: str = "demo"
     account_id: str = ""
     strategy: str = "watch"
@@ -78,6 +95,20 @@ class Config:
     log_dir: Path = Path("logs")
     state_dir: Path = Path("state")
     kill_switch_file: Path = Path("STOP")
+    # MetaTrader 5 (BROKER=mt5). Login is optional: without it the bot uses
+    # the account already logged in to the MT5 terminal.
+    mt5_login: str = ""
+    mt5_password: str = field(default="", repr=False)
+    mt5_server: str = ""
+    mt5_path: str = ""
+    mt5_volume: float | None = None
+    mt5_magic: int = 26102201
+    mt5_deviation: int = 20
+    mt5_utc_offset_hours: float = 0.0
+
+    @property
+    def is_mt5(self) -> bool:
+        return self.broker == "mt5"
 
     @property
     def is_real(self) -> bool:
@@ -88,12 +119,26 @@ class Config:
         if env is None:
             env = dict(os.environ)
 
+        broker = _get(env, "BROKER", "deriv").lower()
+        if broker not in BROKERS:
+            raise ConfigError("BROKER must be deriv or mt5")
         token = _get(env, "DERIV_API_TOKEN")
         app_id = _get(env, "DERIV_APP_ID")
-        if not token:
-            raise ConfigError("DERIV_API_TOKEN is not set. Put it in your .env file.")
-        if not app_id:
-            raise ConfigError("DERIV_APP_ID is not set. Put it in your .env file.")
+        if broker == "deriv":
+            if not token:
+                raise ConfigError("DERIV_API_TOKEN is not set. Put it in your .env file.")
+            if not app_id:
+                raise ConfigError("DERIV_APP_ID is not set. Put it in your .env file.")
+        elif not _get(env, "SYMBOL"):
+            raise ConfigError("Set SYMBOL to the name MetaTrader 5 shows, "
+                              "e.g. SYMBOL=Volatility 100 (1s) Index or SYMBOL=EURUSD")
+        login = _get(env, "MT5_LOGIN")
+        if login and not login.isdigit():
+            raise ConfigError("MT5_LOGIN must be the account number (digits only)")
+        try:
+            utc_offset = float(_get(env, "MT5_SERVER_UTC_OFFSET", "0"))
+        except ValueError:
+            raise ConfigError("MT5_SERVER_UTC_OFFSET must be a number of hours") from None
 
         account_type = _get(env, "DERIV_ACCOUNT_TYPE", "demo").lower()
         if account_type not in {"demo", "real"}:
@@ -107,6 +152,7 @@ class Config:
         cfg = cls(
             api_token=token,
             app_id=app_id,
+            broker=broker,
             account_type=account_type,
             account_id=_get(env, "DERIV_ACCOUNT_ID"),
             strategy=_get(env, "STRATEGY", "watch").lower(),
@@ -127,6 +173,14 @@ class Config:
             log_dir=Path(_get(env, "LOG_DIR", "logs")),
             state_dir=Path(_get(env, "STATE_DIR", "state")),
             kill_switch_file=Path(_get(env, "KILL_SWITCH_FILE", "STOP")),
+            mt5_login=login,
+            mt5_password=_get(env, "MT5_PASSWORD"),
+            mt5_server=_get(env, "MT5_SERVER"),
+            mt5_path=_get(env, "MT5_PATH"),
+            mt5_volume=_optional_float(env, "MT5_VOLUME"),
+            mt5_magic=_int(env, "MT5_MAGIC", "26102201"),
+            mt5_deviation=_int(env, "MT5_DEVIATION", "20"),
+            mt5_utc_offset_hours=utc_offset,
         )
         cfg.validate()
         return cfg
@@ -144,5 +198,10 @@ class Config:
             raise ConfigError("MAX_STAKE cannot be larger than MAX_DAILY_LOSS")
         if self.max_open_trades < 1:
             raise ConfigError("MAX_OPEN_TRADES must be at least 1")
+        if self.broker not in BROKERS:
+            raise ConfigError("BROKER must be deriv or mt5")
+        if self.is_mt5 and self.mt5_login and not (self.mt5_password and self.mt5_server):
+            raise ConfigError("MT5_LOGIN also needs MT5_PASSWORD and MT5_SERVER "
+                              "(or leave all three empty to use the terminal's login)")
         if self.multiplier < 1:
             raise ConfigError("MULTIPLIER must be at least 1")
