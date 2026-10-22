@@ -8,6 +8,14 @@ plumbing test), `trend` (moving-average crossover), `mean_revert`
 
 **New here? Follow [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).**
 
+## MetaTrader 5
+
+With `BROKER=mt5` the same bot trades through a MetaTrader 5 terminal
+instead (for example a Deriv MT5 demo account), with the same strategies and
+limits. Each trade gets a stop loss where the loss equals `STAKE`. It needs
+Windows Python with MT5 open, not WSL or Docker:
+**see [docs/MT5_GUIDE.md](docs/MT5_GUIDE.md).**
+
 ## Phone app
 
 `python -m server` runs the bot together with a phone web app: start, pause
@@ -72,6 +80,7 @@ bot/
   risefall.py      demo-only Rise/Fall martingale runner (the app's Martingale test)
   config.py        settings from .env, with validation
   deriv_client.py  REST + WebSocket client, req_id matching, throttle
+  mt5_client.py    MetaTrader 5 backend (BROKER=mt5), same messages as Deriv
   risk.py          hard limits and persisted daily state
   bot.py           main loop, trading, reconnect, kill switch
   trade_log.py     logs/bot.log and logs/trades.csv
@@ -87,7 +96,7 @@ server/
   pipeline.py      background lab testing, paper trading, alerts
   ai.py            AI strategy ideas through OpenRouter
 web/               the phone app (plain HTML, CSS and JavaScript)
-tests/             offline tests, incl. a fake Deriv WebSocket server
+tests/             offline tests, incl. a fake Deriv WebSocket server and a fake MT5
 ```
 
 ## Strategies

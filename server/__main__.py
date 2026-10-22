@@ -55,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     env = dict(os.environ)
     setup_logging(Path(env.get("LOG_DIR") or "logs"),
                   secrets=tuple(env.get(k, "") for k in
-                                ("DERIV_API_TOKEN", "OPENROUTER_API_KEY", "APP_SECRET_KEY")))
+                                ("DERIV_API_TOKEN", "MT5_PASSWORD", "OPENROUTER_API_KEY",
+                                 "APP_SECRET_KEY")))
     uvicorn.run(create_app(env), host=env.get("APP_HOST", "127.0.0.1"),
                 port=int(env.get("APP_PORT", "8000")), log_config=None,
                 proxy_headers=True, forwarded_allow_ips=env.get("APP_TRUSTED_PROXIES", "127.0.0.1"))
