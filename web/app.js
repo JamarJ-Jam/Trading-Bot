@@ -137,9 +137,14 @@ function header(title, extra) {
   return h("div", { class: "row" }, h("h1", {}, title), extra || null);
 }
 
+const isMt5 = (settings) => !!settings && settings.broker === "mt5";
+const brokerName = (settings) => (isMt5(settings) ? "MetaTrader 5" : "Deriv");
+
 function accountPill(settings) {
   const real = settings && settings.account_type === "real";
-  return h("span", { class: real ? "pill real" : "pill" }, real ? "REAL" : "DEMO");
+  return h("span", { class: "pills" },
+    h("span", { class: "pill" }, isMt5(settings) ? "MT5" : "DERIV"),
+    h("span", { class: real ? "pill real" : "pill" }, real ? "REAL" : "DEMO"));
 }
 
 // ---- screens --------------------------------------------------------------------
@@ -208,7 +213,10 @@ async function homeScreen() {
         h("span", { class: "small" }, h("span", { class: "dot " + (running ? "on" : bot.state === "error" ? "err" : "") }), " ",
           running ? "Running" : bot.state === "error" ? "Error" : "Stopped")),
       h("div", { class: "big" }, bot.balance != null ? money(bot.balance) : "—"),
-      h("div", { class: "muted small" }, `${st.strategy_name} · ${st.symbol} · x${st.multiplier}`),
+      h("div", { class: "muted small" },
+        `${st.strategy_name} · ${brokerName(st)} · ${st.symbol}${isMt5(st) ? "" : " · x" + st.multiplier}`),
+      running && bot.account_id ? h("div", { class: "muted small" },
+        `Account ${bot.account_id}${bot.server ? " on " + bot.server : ""}`) : null,
       h("div", { class: "btnrow" }, startBtn, stopBtn)),
     h("div", { class: "grid3" },
       h("div", { class: "card stat" }, h("span", { class: "muted small" }, "Today"), h("span", { class: "value " + tone(today.pnl) }, money(today.pnl, true))),
@@ -310,7 +318,10 @@ async function strategyScreen() {
   const save = h("button", { class: "primary", type: "button" }, "Save settings");
   save.addEventListener("click", () => act(save, async () => {
     const body = { strategy: strategy.value, symbol: market.get(), exit_on_reverse: reverse.checked };
-    for (const k of ["stake", "multiplier", "max_stake", "max_daily_loss", "max_trade_minutes"]) body[k] = Number(inputs[k].value);
+    for (const k of ["stake", "multiplier", "max_stake", "max_daily_loss", "max_trade_minutes"]) {
+      if (k === "multiplier" && isMt5(st)) continue;
+      body[k] = Number(inputs[k].value);
+    }
     for (const k of ["stop_loss", "take_profit"]) body[k] = inputs[k].value === "" ? "" : Number(inputs[k].value);
     if (strategy.value.startsWith("lab:")) {
       for (const k of ["stop_loss", "take_profit", "max_trade_minutes", "exit_on_reverse"]) delete body[k];
@@ -326,7 +337,10 @@ async function strategyScreen() {
       h("button", { class: real ? "chip on" : "chip", onclick: () => { if (!real) location.hash = "#/live"; } }, "Real account")),
     h("div", { class: "card" },
       field("Strategy", strategy), field("Market", market.select), market.extra,
-      field("Stake per trade", inputs.stake), field("Multiplier", inputs.multiplier),
+      field("Stake per trade", inputs.stake),
+      isMt5(st) ? h("div", { class: "muted small" },
+        "Trading on MetaTrader 5. Each trade's stop loss is set so it can lose about this stake. Lot size is MT5_VOLUME in .env.")
+        : field("Multiplier", inputs.multiplier),
       st.lab_strategy ? h("div", { class: "muted small" }, "Exits come from the lab strategy itself.") : [
         field("Stop loss ($)", inputs.stop_loss), field("Take profit ($)", inputs.take_profit),
         field("Close after minutes (0 = never)", inputs.max_trade_minutes), field("Exit when trend reverses", reverse)]),
@@ -670,7 +684,7 @@ async function liveScreen() {
   render("Switch to real",
     h("a", { href: "#/strategy", class: "linkbtn" }, "← Back"),
     h("h1", {}, "Switch to your real account?"),
-    h("div", { class: "muted" }, `The bot will trade real money with ${st.strategy_name} on ${st.symbol}, ${money(st.stake)} stakes and a ${money(st.max_daily_loss)} daily loss limit.`),
+    h("div", { class: "muted" }, `The bot will trade real money on ${brokerName(st)} with ${st.strategy_name} on ${st.symbol}, ${money(st.stake)} stakes and a ${money(st.max_daily_loss)} daily loss limit.`),
     entry ? h("div", { class: "notice " + (ready ? "good" : "bad") },
       h("strong", {}, ready ? "Ready to go live" : "Not ready for real money"),
       ready ? "All 4 readiness checks passed. Start small and watch the first week."

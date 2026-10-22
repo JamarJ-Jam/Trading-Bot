@@ -145,6 +145,10 @@ def test_markets_follow_the_broker_and_can_be_overridden(tmp_path):
     assert "EURUSD" in [i["value"] for g in data["markets"] for i in g["items"]]
     assert "cryETHUSD" in [i["value"] for g in data["deriv"] for i in g["items"]]
 
+    status = mt5.get("/api/status").json()
+    assert status["settings"]["broker"] == "mt5" and "server" in status["bot"]
+    assert c.get("/api/status").json()["settings"]["broker"] == "deriv"
+
     mine = client(tmp_path, extra={"MARKETS_DERIV": "frxEURUSD:Euro, cryETHUSD"})
     login(mine)
     (group,) = mine.get("/api/markets").json()["markets"]
