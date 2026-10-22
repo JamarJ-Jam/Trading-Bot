@@ -261,3 +261,43 @@ async def test_reader_raises_when_terminal_disconnects(mcfg):
     fake.connected = False
     with pytest.raises(NotConnected):
         await asyncio.wait_for(client.reader(), 2)
+
+
+class PickyMt5(FakeMt5):
+    """order_send only takes keyword arguments, like the error Jamar saw."""
+
+    def order_send(self, *args, **request):
+        if args:
+            self.failed = getattr(self, "failed", 0) + 1
+            return None
+        return super().order_send(request)
+
+    def last_error(self):
+        return (-2, "Unnamed arguments not allowed") if getattr(self, "failed", 0) else (1, "Success")
+
+    def order_check(self, request):
+        return Result(10030, 0, 0, 0.0, 0.0, "Unsupported filling mode")
+
+
+async def test_order_falls_back_to_keyword_arguments(mcfg):
+    client, fake = await connected(mcfg, PickyMt5())
+    quote = (await client.request({"proposal": 1, "amount": 1.0, "contract_type": "MULTUP"}))["proposal"]
+    bought = (await client.request({"buy": quote["id"], "price": 1.0}))["buy"]
+    assert fake.failed == 1 and bought["contract_id"] in fake.positions
+
+
+async def test_rejected_order_says_why(mcfg):
+    class Refusing(FakeMt5):
+        def order_send(self, *args, **kw):
+            return None
+
+        def last_error(self):
+            return (-5, "Internal error")
+
+        def order_check(self, request):
+            return Result(10030, 0, 0, 0.0, 0.0, "Unsupported filling mode")
+
+    client, _ = await connected(mcfg, Refusing())
+    quote = (await client.request({"proposal": 1, "amount": 1.0, "contract_type": "MULTUP"}))["proposal"]
+    with pytest.raises(Mt5Error, match="Internal error.*Unsupported filling mode"):
+        await client.request({"buy": quote["id"], "price": 1.0})

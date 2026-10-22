@@ -350,10 +350,33 @@ class Mt5Client:
             return self.mt5.ORDER_FILLING_IOC
         return self.mt5.ORDER_FILLING_RETURN
 
+    def _order_send(self, request: dict):
+        """Runs in the MT5 thread. Returns (result, error, check). A None
+        result with error code -2 means MT5 rejected the call's arguments
+        before sending anything, so it is safe to try the keyword form."""
+        mt5 = self.mt5
+        result = mt5.order_send(request)
+        if result is None and mt5.last_error()[0] == -2:
+            result = mt5.order_send(**request)
+        if result is not None:
+            return result, None, None
+        error = mt5.last_error()
+        try:
+            check = mt5.order_check(request)
+        except Exception:
+            check = None
+        return None, error, check
+
     async def _send(self, request: dict):
-        result = await self._call(self.mt5.order_send, request)
+        result, error, check = await self._call(self._order_send, request)
         if result is None:
-            raise Mt5Error(self._error("MT5 did not accept the order"))
+            code, text = error
+            detail = f"{text} ({code})"
+            if check is not None:
+                detail += f"; check says {check.retcode}: {check.comment}"
+            log.warning("MT5 order rejected: %s | request %s", detail,
+                        {k: v for k, v in request.items() if k != "comment"})
+            raise Mt5Error(f"MT5 did not accept the order: {detail}")
         if result.retcode not in (RETCODE_DONE, RETCODE_PLACED):
             hint = RETCODE_HINTS.get(result.retcode, result.comment)
             raise Mt5Error(f"MT5 refused the order: {hint}", str(result.retcode))
